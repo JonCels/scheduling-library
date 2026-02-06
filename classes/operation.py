@@ -91,6 +91,73 @@ class Operation:
         """
         return self.start_time is not None and self.end_time is not None
 
+    def unschedule(self):
+        """
+        Clear scheduling information from this operation.
+        
+        This resets the operation to an unscheduled state without removing it
+        from any resource's schedule. Use Schedule.unschedule_operation() instead
+        if you want to properly remove it from a resource.
+        
+        Example:
+            >>> operation.unschedule()
+            >>> assert operation.start_time is None
+        """
+        self.start_time = None
+        self.end_time = None
+        self.resource_id = None
+
+    def can_start_at(self, time: float, operations_dict: dict = None) -> bool:
+        """
+        Check if this operation can start at the specified time based on precedence.
+        
+        This verifies that all predecessor operations in the precedence list have
+        completed before the specified time.
+        
+        Args:
+            time: Unix timestamp to check
+            operations_dict: Dictionary of operation_id -> Operation for looking up precedence.
+                           If None, assumes no precedence constraints.
+            
+        Returns:
+            bool: True if all precedence constraints are satisfied, False otherwise
+            
+        Example:
+            >>> # Check if operation can start at 8 AM
+            >>> can_start = operation.can_start_at(start_time.timestamp(), schedule.operations)
+        """
+        if not self.precedence:
+            return True
+        
+        if operations_dict is None:
+            # No way to check precedence without operation dictionary
+            return True
+        
+        for pred_id in self.precedence:
+            pred_op = operations_dict.get(pred_id)
+            if not pred_op:
+                return False  # Precedence operation doesn't exist
+            if not pred_op.is_scheduled():
+                return False  # Precedence operation not scheduled yet
+            if pred_op.end_time > time:
+                return False  # Precedence operation ends after our start time
+        
+        return True
+
+    def get_duration_hours(self) -> float:
+        """
+        Get the operation duration in hours.
+        
+        Returns:
+            float: Duration in hours
+            
+        Example:
+            >>> operation.duration = 3600  # 1 hour in seconds
+            >>> operation.get_duration_hours()
+            1.0
+        """
+        return self.duration / 3600
+
     def __lt__(self, other):
         """
         Compare operations for sorting by start_time.
@@ -112,3 +179,15 @@ class Operation:
             return True
 
         return self.start_time < other.start_time
+    
+    def __repr__(self):
+        """
+        Return a detailed string representation of the operation.
+        
+        Returns:
+            str: String representation with key attributes
+        """
+        status = "scheduled" if self.is_scheduled() else "unscheduled"
+        return (f"Operation(id={self.operation_id}, job={self.job_id}, "
+                f"type={self.resource_type}, duration={self.get_duration_hours():.1f}h, "
+                f"status={status})")

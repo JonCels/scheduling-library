@@ -181,3 +181,211 @@ class Resource:
             >>> resource.remove_operation(operation)
         """
         self.schedule.discard(operation)
+    
+    def get_operation_at(self, time: float) -> Optional[Operation]:
+        """
+        Get the operation running at a specific time.
+        
+        Args:
+            time: Unix timestamp to check
+            
+        Returns:
+            Operation: The operation running at this time, or None if resource is idle
+            
+        Example:
+            >>> op = resource.get_operation_at(datetime(2024, 1, 1, 10, 0).timestamp())
+            >>> if op:
+            ...     print(f"Resource is running {op.operation_id}")
+        """
+        for op in self.schedule:
+            if op.start_time <= time < op.end_time:
+                return op
+        return None
+    
+    def get_next_available_time(self, duration: float, after: float = 0) -> Optional[float]:
+        """
+        Find the next time slot where this resource can fit an operation of given duration.
+        
+        This method searches for gaps in the schedule (or after all scheduled operations)
+        where an operation of the specified duration can fit.
+        
+        Args:
+            duration: Duration in seconds of the operation to fit
+            after: Unix timestamp - start searching after this time (default: 0)
+            
+        Returns:
+            float: Unix timestamp of next available start time, or None if no availability
+                  windows are defined and the resource has operations scheduled
+            
+        Example:
+            >>> # Find when we can schedule a 2-hour operation
+            >>> next_time = resource.get_next_available_time(7200, current_time.timestamp())
+            >>> if next_time:
+            ...     print(f"Can schedule at {datetime.fromtimestamp(next_time)}")
+        """
+        # If no availability windows defined, find the first gap after 'after' time
+        if not self.availability_windows:
+            if not self.schedule:
+                return after
+            
+            # Find first gap that fits after the specified time
+            for i in range(len(self.schedule)):
+                if i == 0:
+                    # Check before first operation
+                    if self.schedule[0].start_time >= after + duration:
+                        return max(after, 0)
+                
+                # Check gap between operations
+                if i < len(self.schedule) - 1:
+                    gap_start = max(after, self.schedule[i].end_time)
+                    gap_end = self.schedule[i + 1].start_time
+                    if gap_end - gap_start >= duration:
+                        return gap_start
+            
+            # Can fit after all operations
+            if self.schedule:
+                return max(after, self.schedule[-1].end_time)
+            return after
+        
+        # With availability windows, check each window
+        for window_start, window_end in self.availability_windows:
+            search_start = max(after, window_start)
+            
+            if search_start + duration > window_end:
+                continue  # Duration doesn't fit in this window
+            
+            # Check if we can fit at the beginning of the window
+            if self.is_available(search_start, search_start + duration):
+                return search_start
+            
+            # Check gaps within this window
+            for i, op in enumerate(self.schedule):
+                if op.start_time >= window_end:
+                    break  # Past this window
+                
+                if op.end_time <= search_start:
+                    continue  # Before our search range
+                
+                # Try after this operation
+                gap_start = max(search_start, op.end_time)
+                if gap_start + duration <= window_end:
+                    if self.is_available(gap_start, gap_start + duration):
+                        return gap_start
+        
+        return None  # No available slot found
+    
+    def get_utilization(self, start: float, end: float) -> float:
+        """
+        Calculate resource utilization (% busy time) in a given time range.
+        
+        Args:
+            start: Start of time range (Unix timestamp)
+            end: End of time range (Unix timestamp)
+            
+        Returns:
+            float: Utilization as a fraction between 0.0 and 1.0 (0% to 100%)
+            
+        Example:
+            >>> # Check utilization during work day
+            >>> util = resource.get_utilization(day_start.timestamp(), day_end.timestamp())
+            >>> print(f"Resource is {util * 100:.1f}% utilized")
+        """
+        if end <= start:
+            return 0.0
+        
+        total_time = end - start
+        busy_time = 0.0
+        
+        for op in self.schedule:
+            # Skip operations outside our time range
+            if op.end_time <= start or op.start_time >= end:
+                continue
+            
+            # Calculate overlap
+            overlap_start = max(start, op.start_time)
+            overlap_end = min(end, op.end_time)
+            busy_time += overlap_end - overlap_start
+        
+        return busy_time / total_time
+    
+    def get_schedule_gaps(self, start: float = None, end: float = None) -> List[Tuple[float, float]]:
+        """
+        Find all gaps (idle periods) in the resource's schedule.
+        
+        Args:
+            start: Start of time range to check (default: start of first operation)
+            end: End of time range to check (default: end of last operation)
+            
+        Returns:
+            List[Tuple[float, float]]: List of (gap_start, gap_end) tuples
+            
+        Example:
+            >>> gaps = resource.get_schedule_gaps()
+            >>> for gap_start, gap_end in gaps:
+            ...     duration = gap_end - gap_start
+            ...     print(f"Gap: {duration / 3600:.1f} hours")
+        """
+        if not self.schedule:
+            return []
+        
+        gaps = []
+        
+        # Determine time range
+        if start is None:
+            start = self.schedule[0].start_time
+        if end is None:
+            end = self.schedule[-1].end_time
+        
+        # Check gap before first operation
+        if self.schedule[0].start_time > start:
+            gaps.append((start, self.schedule[0].start_time))
+        
+        # Check gaps between operations
+        for i in range(len(self.schedule) - 1):
+            gap_start = self.schedule[i].end_time
+            gap_end = self.schedule[i + 1].start_time
+            if gap_end > gap_start:
+                gaps.append((gap_start, gap_end))
+        
+        # Check gap after last operation
+        if self.schedule[-1].end_time < end:
+            gaps.append((self.schedule[-1].end_time, end))
+        
+        return gaps
+    
+    def clear_schedule(self):
+        """
+        Remove all operations from this resource's schedule.
+        
+        This does NOT unschedule the operations themselves - they will still have
+        their start_time, end_time, and resource_id set. Use Schedule.clear_all()
+        for a complete reset.
+        
+        Example:
+            >>> resource.clear_schedule()
+            >>> assert len(resource.schedule) == 0
+        """
+        self.schedule.clear()
+    
+    def get_total_scheduled_time(self) -> float:
+        """
+        Get the total duration of all scheduled operations.
+        
+        Returns:
+            float: Sum of all operation durations in seconds
+            
+        Example:
+            >>> total = resource.get_total_scheduled_time()
+            >>> print(f"Resource has {total / 3600:.1f} hours scheduled")
+        """
+        return sum(op.duration for op in self.schedule)
+    
+    def __repr__(self):
+        """
+        Return a detailed string representation of the resource.
+        
+        Returns:
+            str: String representation with key attributes
+        """
+        return (f"Resource(id={self.resource_id}, type={self.resource_type}, "
+                f"name={self.resource_name}, scheduled_ops={len(self.schedule)})")

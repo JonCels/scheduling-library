@@ -6,7 +6,7 @@ and provides methods for scheduling operations and visualizing the results.
 """
 
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional, List
 
 # Optional matplotlib imports for visual charts
 try:
@@ -56,7 +56,8 @@ class Schedule:
         name: str, 
         schedule_id: str, 
         start_date: datetime, 
-        end_date: datetime
+        end_date: datetime,
+        changeover_minutes: float = 0.0
     ):
         """
         Initialize a new Schedule.
@@ -66,11 +67,13 @@ class Schedule:
             schedule_id: Unique identifier
             start_date: Start of the scheduling period
             end_date: End of the scheduling period
+            changeover_minutes: Extra time added when switching job types on a resource
         """
         self.name = name
         self.schedule_id = schedule_id
         self.start_date = start_date
         self.end_date = end_date
+        self.changeover_seconds = changeover_minutes * 60
         self.jobs: Dict[str, "Job"] = {}
         self.resources: Dict[str, "Resource"] = {}
         self.operations: Dict[str, "Operation"] = {}
@@ -111,6 +114,195 @@ class Schedule:
             >>> schedule.add_resource(resource)
         """
         self.resources[resource.resource_id] = resource
+
+    def _get_primary_resource_id(self, operation: "Operation") -> str:
+        """
+        Get the primary resource ID for an operation.
+        """
+        if not operation.possible_resource_ids:
+            raise ValueError(f"Operation {operation.operation_id} has no possible_resource_ids")
+        return operation.possible_resource_ids[0]
+
+    def _get_job_type(self, operation: "Operation") -> Optional[str]:
+        job = self.jobs.get(operation.job_id)
+        if not job:
+            return None
+        return job.metadata.get("job_type")
+
+    def _requires_changeover(
+        self, prev_op: Optional["Operation"], next_op: Optional["Operation"]
+    ) -> bool:
+        if self.changeover_seconds <= 0 or not prev_op or not next_op:
+            return False
+        prev_type = self._get_job_type(prev_op)
+        next_type = self._get_job_type(next_op)
+        if not prev_type or not next_type:
+            return False
+        return prev_type != next_type
+
+    def _find_earliest_slot(
+        self,
+        resource: "Resource",
+        duration: float,
+        earliest_start: float,
+        operation: Optional["Operation"] = None,
+    ) -> float:
+        """
+        Find the earliest start time (timestamp) on a resource that fits duration.
+        """
+        t = earliest_start
+        while True:
+            # Respect availability windows if defined
+            if resource.availability_windows:
+                window_found = False
+                for window_start, window_end in resource.availability_windows:
+                    if t < window_start:
+                        t = window_start
+                    if t + duration <= window_end:
+                        window_found = True
+                        break
+                    t = window_end
+                if not window_found:
+                    raise RuntimeError(
+                        f"No availability window can fit duration on {resource.resource_id}"
+                    )
+
+            # Find previous and next operations around time t
+            prev_op = None
+            next_op = None
+            for scheduled_op in resource.schedule:
+                if scheduled_op.start_time < t:
+                    prev_op = scheduled_op
+                    continue
+                next_op = scheduled_op
+                break
+
+            # Overlap with previous operation
+            if prev_op and prev_op.end_time > t:
+                t = prev_op.end_time
+                continue
+
+            # Enforce changeover gap after previous operation
+            if operation and prev_op and self._requires_changeover(prev_op, operation):
+                min_start = prev_op.end_time + self.changeover_seconds
+                if t < min_start:
+                    t = min_start
+                    continue
+
+            # Check conflict with next operation (including changeover before it)
+            if next_op:
+                if t + duration > next_op.start_time:
+                    t = next_op.end_time
+                    continue
+                if operation and self._requires_changeover(operation, next_op):
+                    min_gap_end = t + duration + self.changeover_seconds
+                    if min_gap_end > next_op.start_time:
+                        t = next_op.end_time
+                        continue
+
+            return t
+
+    def _resource_allows_changeover(
+        self, resource: "Resource", operation: "Operation", start_ts: float, end_ts: float
+    ) -> bool:
+        """
+        Validate changeover constraints for a proposed operation placement.
+        """
+        if self.changeover_seconds <= 0 or not resource.schedule:
+            return True
+
+        prev_op = None
+        next_op = None
+        for scheduled_op in resource.schedule:
+            if scheduled_op.start_time < start_ts:
+                prev_op = scheduled_op
+                continue
+            next_op = scheduled_op
+            break
+
+        if prev_op and self._requires_changeover(prev_op, operation):
+            if start_ts < prev_op.end_time + self.changeover_seconds:
+                return False
+
+        if next_op and self._requires_changeover(operation, next_op):
+            if end_ts + self.changeover_seconds > next_op.start_time:
+                return False
+
+        return True
+
+    def _find_earliest_no_wait_start(
+        self, operations: List["Operation"], earliest_start: float
+    ) -> float:
+        """
+        Find the earliest start time for a chain of operations with no-wait between them.
+        """
+        t = earliest_start
+        while True:
+            shifted = False
+            elapsed = 0.0
+            for op in operations:
+                resource_id = self._get_primary_resource_id(op)
+                resource = self.resources[resource_id]
+                start_i = t + elapsed
+                start_i_feasible = self._find_earliest_slot(resource, op.duration, start_i, op)
+                if start_i_feasible != start_i:
+                    t += start_i_feasible - start_i
+                    shifted = True
+                    break
+                elapsed += op.duration
+            if not shifted:
+                return t
+
+    def schedule_job_template(
+        self,
+        job_template: "JobTemplate",
+        instance_id: str,
+        start_time: datetime,
+        blocking: Optional[bool] = None,
+    ) -> "Job":
+        """
+        Instantiate a JobTemplate and schedule its operations.
+
+        If blocking is True, operations are scheduled back-to-back with no wait time
+        between them (useful when the job cannot leave a resource until the next step
+        is ready). If blocking is False, each operation is scheduled as early as possible
+        after its predecessors complete.
+        """
+        job = job_template.instantiate(instance_id)
+        self.add_job(job)
+
+        blocking = job_template.blocking if blocking is None else blocking
+        earliest_start = start_time.timestamp()
+
+        if blocking:
+            start_ts = self._find_earliest_no_wait_start(job.operations, earliest_start)
+            elapsed = 0.0
+            for op in job.operations:
+                op_start = start_ts + elapsed
+                resource_id = self._get_primary_resource_id(op)
+                scheduled = self.schedule_operation(
+                    op.operation_id, resource_id, datetime.fromtimestamp(op_start)
+                )
+                if not scheduled:
+                    raise RuntimeError(f"Failed to schedule {op.operation_id} at {op_start}")
+                elapsed += op.duration
+            return job
+
+        for op in job.operations:
+            resource_id = self._get_primary_resource_id(op)
+            earliest = earliest_start
+            if op.precedence:
+                earliest = max(earliest, max(self.operations[p].end_time for p in op.precedence))
+            start_ts = self._find_earliest_slot(
+                self.resources[resource_id], op.duration, earliest, op
+            )
+            scheduled = self.schedule_operation(
+                op.operation_id, resource_id, datetime.fromtimestamp(start_ts)
+            )
+            if not scheduled:
+                raise RuntimeError(f"Failed to schedule {op.operation_id} at {start_ts}")
+
+        return job
 
     def schedule_operation(self, operation_id: str, resource_id: str, start_time: datetime) -> bool:
         """
@@ -175,6 +367,10 @@ class Schedule:
         # Check resource availability
         if not resource.is_available(start_timestamp, end_timestamp):
             return False
+
+        # Enforce changeover constraints between different job types
+        if not self._resource_allows_changeover(resource, op, start_timestamp, end_timestamp):
+            return False
         
         # Verify all precedence constraints are satisfied
         # All predecessor operations must be completed before this one can start
@@ -235,6 +431,370 @@ class Schedule:
         op.resource_id = None
         op.start_time = None
         op.end_time = None
+    
+    def get_scheduled_operations(self) -> Dict[str, "Operation"]:
+        """
+        Get all operations that have been scheduled.
+        
+        Returns:
+            Dict[str, Operation]: Dictionary of scheduled operations indexed by operation_id
+            
+        Example:
+            >>> scheduled = schedule.get_scheduled_operations()
+            >>> print(f"{len(scheduled)} operations scheduled")
+        """
+        return {op_id: op for op_id, op in self.operations.items() if op.is_scheduled()}
+    
+    def get_unscheduled_operations(self) -> Dict[str, "Operation"]:
+        """
+        Get all operations that have not been scheduled yet.
+        
+        Returns:
+            Dict[str, Operation]: Dictionary of unscheduled operations indexed by operation_id
+            
+        Example:
+            >>> unscheduled = schedule.get_unscheduled_operations()
+            >>> for op_id, op in unscheduled.items():
+            ...     print(f"Need to schedule: {op_id}")
+        """
+        return {op_id: op for op_id, op in self.operations.items() if not op.is_scheduled()}
+    
+    def get_job_completion_time(self, job_id: str) -> Optional[float]:
+        """
+        Get the completion time of a job (when its last operation finishes).
+        
+        Args:
+            job_id: ID of the job
+            
+        Returns:
+            float: Unix timestamp when job completes, or None if job not found or not fully scheduled
+            
+        Raises:
+            KeyError: If job_id doesn't exist
+            
+        Example:
+            >>> completion = schedule.get_job_completion_time("JOB_001")
+            >>> if completion:
+            ...     print(f"Job completes at {datetime.fromtimestamp(completion)}")
+        """
+        if job_id not in self.jobs:
+            raise KeyError(f"Job {job_id} not found")
+        
+        return self.jobs[job_id].get_end_time()
+    
+    def get_makespan(self) -> Optional[float]:
+        """
+        Get the overall makespan (time from first operation to last operation).
+        
+        Returns:
+            float: Total time in seconds from start to finish, or None if no operations scheduled
+            
+        Example:
+            >>> makespan = schedule.get_makespan()
+            >>> if makespan:
+            ...     print(f"Schedule takes {makespan / 3600:.1f} hours")
+        """
+        scheduled = list(self.get_scheduled_operations().values())
+        if not scheduled:
+            return None
+        
+        earliest = min(op.start_time for op in scheduled)
+        latest = max(op.end_time for op in scheduled)
+        return latest - earliest
+    
+    def get_resources_by_type(self, resource_type: str) -> Dict[str, "Resource"]:
+        """
+        Get all resources of a specific type.
+        
+        Args:
+            resource_type: The resource type to filter by
+            
+        Returns:
+            Dict[str, Resource]: Dictionary of resources of this type
+            
+        Example:
+            >>> machines = schedule.get_resources_by_type("machining")
+            >>> print(f"Found {len(machines)} machining resources")
+        """
+        return {r_id: r for r_id, r in self.resources.items() if r.resource_type == resource_type}
+    
+    def find_available_resources(self, operation_id: str, start_time: datetime) -> List[str]:
+        """
+        Find which resources can perform an operation at a specific time.
+        
+        This checks both resource compatibility and availability.
+        
+        Args:
+            operation_id: ID of the operation
+            start_time: Proposed start time (datetime object)
+            
+        Returns:
+            List[str]: List of resource IDs that can perform this operation at this time
+            
+        Raises:
+            KeyError: If operation_id doesn't exist
+            
+        Example:
+            >>> available = schedule.find_available_resources("OP_001", datetime(2024, 1, 1, 8, 0))
+            >>> print(f"Can use resources: {available}")
+        """
+        if operation_id not in self.operations:
+            raise KeyError(f"Operation {operation_id} not found")
+        
+        op = self.operations[operation_id]
+        start_ts = start_time.timestamp()
+        end_ts = start_ts + op.duration
+        
+        available = []
+        for resource_id in op.possible_resource_ids:
+            resource = self.resources.get(resource_id)
+            if resource and resource.is_available(start_ts, end_ts):
+                if not self._resource_allows_changeover(resource, op, start_ts, end_ts):
+                    continue
+                # Also check precedence constraints
+                if op.can_start_at(start_ts, self.operations):
+                    available.append(resource_id)
+        
+        return available
+
+    def get_resource_used_time(
+        self,
+        resource_id: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> float:
+        """
+        Get total busy time (seconds) for a resource in a time window.
+        """
+        if resource_id not in self.resources:
+            raise KeyError(f"Resource {resource_id} not found")
+
+        resource = self.resources[resource_id]
+        if not resource.schedule:
+            return 0.0
+
+        start_ts = start_time.timestamp() if start_time else resource.schedule[0].start_time
+        end_ts = end_time.timestamp() if end_time else resource.schedule[-1].end_time
+
+        if end_ts <= start_ts:
+            return 0.0
+
+        busy_time = 0.0
+        for op in resource.schedule:
+            if op.end_time <= start_ts or op.start_time >= end_ts:
+                continue
+            overlap_start = max(start_ts, op.start_time)
+            overlap_end = min(end_ts, op.end_time)
+            busy_time += overlap_end - overlap_start
+
+        return busy_time
+
+    def get_resource_total_time(
+        self,
+        resource_id: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> float:
+        """
+        Get total elapsed time (seconds) on a resource, including idle gaps.
+        """
+        if resource_id not in self.resources:
+            raise KeyError(f"Resource {resource_id} not found")
+
+        resource = self.resources[resource_id]
+        if not resource.schedule:
+            return 0.0
+
+        start_ts = start_time.timestamp() if start_time else resource.schedule[0].start_time
+        end_ts = end_time.timestamp() if end_time else resource.schedule[-1].end_time
+
+        if end_ts <= start_ts:
+            return 0.0
+
+        return end_ts - start_ts
+
+    def get_total_operational_time(self) -> float:
+        """
+        Get total operational time (seconds) from first start to last end.
+        """
+        scheduled_ops = list(self.get_scheduled_operations().values())
+        if not scheduled_ops:
+            return 0.0
+
+        earliest = min(op.start_time for op in scheduled_ops)
+        latest = max(op.end_time for op in scheduled_ops)
+        if latest <= earliest:
+            return 0.0
+        return latest - earliest
+    
+    def validate_schedule(self) -> Dict[str, List[str]]:
+        """
+        Validate the schedule for conflicts and constraint violations.
+        
+        Checks for:
+        - Resource conflicts (double-booking)
+        - Precedence violations
+        - Resource type mismatches
+        
+        Returns:
+            Dict[str, List[str]]: Dictionary of validation issues, empty if valid
+            
+        Example:
+            >>> issues = schedule.validate_schedule()
+            >>> if issues:
+            ...     print("Schedule has issues:", issues)
+            >>> else:
+            ...     print("Schedule is valid!")
+        """
+        issues = {
+            "resource_conflicts": [],
+            "precedence_violations": [],
+            "type_mismatches": []
+        }
+        
+        # Check for resource conflicts
+        for resource_id, resource in self.resources.items():
+            for i in range(len(resource.schedule) - 1):
+                op1 = resource.schedule[i]
+                op2 = resource.schedule[i + 1]
+                if op1.end_time > op2.start_time:
+                    issues["resource_conflicts"].append(
+                        f"Resource {resource_id}: {op1.operation_id} overlaps with {op2.operation_id}"
+                    )
+        
+        # Check precedence violations
+        for op_id, op in self.operations.items():
+            if not op.is_scheduled():
+                continue
+            
+            for pred_id in op.precedence:
+                pred_op = self.operations.get(pred_id)
+                if not pred_op or not pred_op.is_scheduled():
+                    issues["precedence_violations"].append(
+                        f"Operation {op_id}: precedence {pred_id} not scheduled"
+                    )
+                elif pred_op.end_time > op.start_time:
+                    issues["precedence_violations"].append(
+                        f"Operation {op_id} starts before precedence {pred_id} completes"
+                    )
+        
+        # Check resource type mismatches
+        for op_id, op in self.operations.items():
+            if not op.is_scheduled():
+                continue
+            
+            resource = self.resources.get(op.resource_id)
+            if resource and resource.resource_type != op.resource_type:
+                issues["type_mismatches"].append(
+                    f"Operation {op_id} requires {op.resource_type} but scheduled on {resource.resource_type}"
+                )
+        
+        # Remove empty categories
+        return {k: v for k, v in issues.items() if v}
+    
+    def clear_all_schedules(self):
+        """
+        Unschedule all operations and clear all resource schedules.
+        
+        This resets the entire schedule to an unscheduled state while keeping
+        all jobs, operations, and resources defined.
+        
+        Example:
+            >>> schedule.clear_all_schedules()
+            >>> assert len(schedule.get_scheduled_operations()) == 0
+        """
+        # Unschedule all operations
+        for op in self.operations.values():
+            op.unschedule()
+        
+        # Clear all resource schedules
+        for resource in self.resources.values():
+            resource.clear_schedule()
+    
+    def get_schedule_statistics(self) -> dict:
+        """
+        Get comprehensive statistics about the schedule.
+        
+        Returns:
+            dict: Dictionary containing various schedule metrics
+            
+        Example:
+            >>> stats = schedule.get_schedule_statistics()
+            >>> print(f"Utilization: {stats['avg_resource_utilization']:.1%}")
+        """
+        scheduled_ops = list(self.get_scheduled_operations().values())
+        
+        if not scheduled_ops:
+            return {
+                "total_operations": len(self.operations),
+                "scheduled_operations": 0,
+                "unscheduled_operations": len(self.operations),
+                "total_jobs": len(self.jobs),
+                "complete_jobs": 0,
+                "total_resources": len(self.resources),
+                "makespan_hours": 0,
+                "avg_resource_utilization": 0
+            }
+        
+        earliest = min(op.start_time for op in scheduled_ops)
+        latest = max(op.end_time for op in scheduled_ops)
+        makespan = latest - earliest
+        
+        # Calculate average resource utilization
+        total_util = 0
+        for resource in self.resources.values():
+            if len(resource.schedule) > 0:
+                util = resource.get_utilization(earliest, latest)
+                total_util += util
+        avg_util = total_util / len(self.resources) if self.resources else 0
+        
+        complete_jobs = sum(1 for job in self.jobs.values() if job.is_complete())
+        
+        return {
+            "total_operations": len(self.operations),
+            "scheduled_operations": len(scheduled_ops),
+            "unscheduled_operations": len(self.operations) - len(scheduled_ops),
+            "total_jobs": len(self.jobs),
+            "complete_jobs": complete_jobs,
+            "incomplete_jobs": len(self.jobs) - complete_jobs,
+            "total_resources": len(self.resources),
+            "makespan_hours": makespan / 3600,
+            "avg_resource_utilization": avg_util
+        }
+    
+    def print_schedule_statistics(self):
+        """
+        Print a formatted summary of schedule statistics.
+        
+        Example:
+            >>> schedule.print_schedule_statistics()
+            === Schedule Statistics ===
+            Operations: 15 total, 12 scheduled, 3 unscheduled
+            ...
+        """
+        stats = self.get_schedule_statistics()
+        
+        print("\n=== Schedule Statistics ===")
+        print(f"Operations: {stats['total_operations']} total, "
+              f"{stats['scheduled_operations']} scheduled, "
+              f"{stats['unscheduled_operations']} unscheduled")
+        print(f"Jobs: {stats['total_jobs']} total, "
+              f"{stats['complete_jobs']} complete, "
+              f"{stats['incomplete_jobs']} incomplete")
+        print(f"Resources: {stats['total_resources']}")
+        print(f"Makespan: {stats['makespan_hours']:.2f} hours")
+        print(f"Avg Resource Utilization: {stats['avg_resource_utilization']:.1%}")
+        
+        # Validation
+        issues = self.validate_schedule()
+        if issues:
+            print("\n[!] Validation Issues Found:")
+            for category, problems in issues.items():
+                print(f"  {category}:")
+                for problem in problems:
+                    print(f"    - {problem}")
+        else:
+            print("\n[OK] Schedule is valid (no conflicts detected)")
 
     def create_gantt_chart(self):
         """
