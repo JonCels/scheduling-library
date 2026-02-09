@@ -17,8 +17,10 @@ from typing import List, Dict, Optional
 import sys
 import os
 
-# Add the classes directory to the path so we can import our modules
-sys.path.append(os.path.join(os.path.dirname(__file__), 'classes'))
+# Ensure repo root is on the path so "classes" imports work
+ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from classes.job import Job
 from classes.operation import Operation

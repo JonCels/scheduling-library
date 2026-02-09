@@ -1,11 +1,11 @@
 """
 Operation class for the scheduling library.
 
-An Operation represents a single step in a job that must be performed on a specific
-resource type for a defined duration.
+An Operation represents a single step in a job that must be performed on one or more
+resource types for a defined duration.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 
 class Operation:
@@ -21,13 +21,16 @@ class Operation:
         operation_id (str): Unique identifier for the operation
         job_id (str): ID of the job this operation belongs to
         duration (float): Duration of the operation in seconds
-        resource_type (str): Type of resource required (e.g., "machining", "assembly")
-        possible_resource_ids (List[str]): List of specific resources that can perform this operation
+        resource_type (str): Type of resource required (single-resource mode)
+        possible_resource_ids (List[str]): List of specific resources (single-resource mode)
+        resource_requirements (List[Dict[str, List[str]]]): Multi-resource requirements list
+            with entries like {"resource_type": "site", "possible_resource_ids": ["SITE_1", "SITE_2"]}
         precedence (List[str]): List of operation IDs that must complete before this one
         metadata (dict): Optional dictionary for additional operation information
         start_time (float): Scheduled start time as Unix timestamp (None if unscheduled)
         end_time (float): Scheduled end time as Unix timestamp (None if unscheduled)
-        resource_id (str): ID of the resource this operation is scheduled on (None if unscheduled)
+        resource_id (str): Primary resource ID (single-resource mode or first assigned)
+        assigned_resources (dict): Mapping of resource_type -> resource_id(s)
     
     Example:
         >>> op = Operation(
@@ -46,13 +49,15 @@ class Operation:
         operation_id: str,
         job_id: str,
         duration: float,
-        resource_type: str,
+        resource_type: Optional[str] = None,
         possible_resource_ids: Optional[List[str]] = None,
+        resource_requirements: Optional[List[Dict[str, List[str]]]] = None,
         precedence: Optional[List[str]] = None,
         metadata: Optional[dict] = None,
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         resource_id: Optional[str] = None,
+        assigned_resources: Optional[dict] = None,
     ):
         """
         Initialize a new Operation.
@@ -61,24 +66,28 @@ class Operation:
             operation_id: Unique identifier for this operation
             job_id: ID of the parent job
             duration: Duration in seconds
-            resource_type: Type of resource required (must match a resource's type)
-            possible_resource_ids: List of specific resource IDs that can perform this operation
+            resource_type: Type of resource required (single-resource mode)
+            possible_resource_ids: List of specific resource IDs (single-resource mode)
+            resource_requirements: Multi-resource requirements list
             precedence: List of operation IDs that must complete before this can start
             metadata: Optional dictionary for additional operation information
             start_time: Scheduled start time as Unix timestamp (set during scheduling)
             end_time: Scheduled end time as Unix timestamp (set during scheduling)
-            resource_id: ID of assigned resource (set during scheduling)
+            resource_id: Primary assigned resource (set during scheduling)
+            assigned_resources: Dict of assigned resources for multi-resource mode
         """
         self.operation_id = operation_id
         self.job_id = job_id
         self.duration = duration
         self.resource_type = resource_type  # e.g., "machining", "assembly", "painting"
         self.possible_resource_ids = possible_resource_ids or []
+        self.resource_requirements = resource_requirements
         self.precedence = precedence or []  # Operations that must complete first
         self.metadata = metadata or {}
         self.start_time = start_time
         self.end_time = end_time
         self.resource_id = resource_id
+        self.assigned_resources = assigned_resources or {}
 
     def is_scheduled(self) -> bool:
         """
@@ -106,6 +115,32 @@ class Operation:
         self.start_time = None
         self.end_time = None
         self.resource_id = None
+        self.assigned_resources = {}
+
+    def get_resource_requirements(self) -> List[Dict[str, List[str]]]:
+        """
+        Return normalized resource requirements for this operation.
+        """
+        if self.resource_requirements:
+            return self.resource_requirements
+        if self.resource_type and self.possible_resource_ids:
+            return [{
+                "resource_type": self.resource_type,
+                "possible_resource_ids": list(self.possible_resource_ids),
+            }]
+        return []
+
+    def get_assigned_resource_ids(self) -> List[str]:
+        """
+        Return a flat list of assigned resource IDs.
+        """
+        assigned = []
+        for value in self.assigned_resources.values():
+            if isinstance(value, list):
+                assigned.extend(value)
+            else:
+                assigned.append(value)
+        return assigned
 
     def can_start_at(self, time: float, operations_dict: dict = None) -> bool:
         """
@@ -188,6 +223,7 @@ class Operation:
             str: String representation with key attributes
         """
         status = "scheduled" if self.is_scheduled() else "unscheduled"
+        op_type = self.resource_type or "multi"
         return (f"Operation(id={self.operation_id}, job={self.job_id}, "
-                f"type={self.resource_type}, duration={self.get_duration_hours():.1f}h, "
+                f"type={op_type}, duration={self.get_duration_hours():.1f}h, "
                 f"status={status})")

@@ -5,29 +5,16 @@ A JobTemplate defines a reusable set of operations and precedence constraints.
 It can be instantiated into concrete Job instances with unique operation IDs.
 """
 
-from dataclasses import dataclass, field
 from typing import List, Optional
 
-from job import Job
-from operation import Operation
-
-
-@dataclass(frozen=True)
-class OperationTemplate:
-    """
-    Defines a reusable operation within a job template.
-    """
-    template_id: str
-    duration: float
-    resource_type: str
-    possible_resource_ids: List[str]
-    precedence: List[str] = field(default_factory=list)
-    metadata: Optional[dict] = None
+from classes.job import Job
+from classes.operation import Operation
+from classes.operation_template import OperationTemplate
 
 
 class JobTemplate:
     """
-    Represents a reusable job definition with optional blocking constraint.
+    Represents a reusable job definition.
     """
 
     def __init__(
@@ -35,12 +22,10 @@ class JobTemplate:
         template_id: str,
         operations: List[OperationTemplate],
         metadata: Optional[dict] = None,
-        blocking: bool = False,
     ):
         self.template_id = template_id
         self.operations = operations
         self.metadata = metadata or {}
-        self.blocking = blocking
 
     def instantiate(self, instance_id: str, job_id: Optional[str] = None) -> Job:
         """
@@ -60,7 +45,10 @@ class JobTemplate:
                     job_id=job_id,
                     duration=op.duration,
                     resource_type=op.resource_type,
-                    possible_resource_ids=list(op.possible_resource_ids),
+                    possible_resource_ids=list(op.possible_resource_ids)
+                    if op.possible_resource_ids
+                    else None,
+                    resource_requirements=op.resource_requirements,
                     precedence=precedence,
                     metadata=op.metadata or {},
                 )

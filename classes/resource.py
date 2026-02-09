@@ -7,7 +7,7 @@ Resources maintain their own schedule and availability windows.
 
 from sortedcontainers import SortedList
 from typing import Optional, List, Tuple
-from operation import Operation
+from classes.operation import Operation
 
 
 class Resource:
@@ -151,12 +151,19 @@ class Resource:
         if not operation.start_time or not operation.end_time:
             raise ValueError("Operation must have start_time and end_time before scheduling")
 
-        # Validate resource type compatibility
-        if operation.resource_type != self.resource_type:
+        # Validate resource compatibility
+        assigned_ids = operation.get_assigned_resource_ids()
+        if assigned_ids and self.resource_id not in assigned_ids:
             raise ValueError(
-                f"Operation with resource type {operation.resource_type} can't be scheduled "
-                f"on resource {self.resource_name} with type {self.resource_type}"
+                f"Operation {operation.operation_id} is not assigned to resource {self.resource_id}"
             )
+
+        if operation.resource_type and operation.resource_type != self.resource_type:
+            if not assigned_ids:
+                raise ValueError(
+                    f"Operation with resource type {operation.resource_type} can't be scheduled "
+                    f"on resource {self.resource_name} with type {self.resource_type}"
+                )
 
         # Check for scheduling conflicts
         if not self.is_available(operation.start_time, operation.end_time):

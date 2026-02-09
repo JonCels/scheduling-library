@@ -8,7 +8,7 @@ operations that must be scheduled on resources.
 from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from operation import Operation
+    from classes.operation import Operation
 
 
 class Job:

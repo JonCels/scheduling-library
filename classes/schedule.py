@@ -6,7 +6,10 @@ and provides methods for scheduling operations and visualizing the results.
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, TYPE_CHECKING
+import itertools
+if TYPE_CHECKING:
+    from classes.constraints import Constraint
 
 # Optional matplotlib imports for visual charts
 try:
@@ -56,8 +59,7 @@ class Schedule:
         name: str, 
         schedule_id: str, 
         start_date: datetime, 
-        end_date: datetime,
-        changeover_minutes: float = 0.0
+        end_date: datetime
     ):
         """
         Initialize a new Schedule.
@@ -67,16 +69,15 @@ class Schedule:
             schedule_id: Unique identifier
             start_date: Start of the scheduling period
             end_date: End of the scheduling period
-            changeover_minutes: Extra time added when switching job types on a resource
         """
         self.name = name
         self.schedule_id = schedule_id
         self.start_date = start_date
         self.end_date = end_date
-        self.changeover_seconds = changeover_minutes * 60
         self.jobs: Dict[str, "Job"] = {}
         self.resources: Dict[str, "Resource"] = {}
         self.operations: Dict[str, "Operation"] = {}
+        self.constraints: List["Constraint"] = []
 
     def __str__(self):
         """Return a string representation of the schedule."""
@@ -115,30 +116,121 @@ class Schedule:
         """
         self.resources[resource.resource_id] = resource
 
-    def _get_primary_resource_id(self, operation: "Operation") -> str:
+    def add_constraint(self, constraint: "Constraint"):
         """
-        Get the primary resource ID for an operation.
+        Add a scheduling constraint.
         """
-        if not operation.possible_resource_ids:
-            raise ValueError(f"Operation {operation.operation_id} has no possible_resource_ids")
-        return operation.possible_resource_ids[0]
+        self.constraints.append(constraint)
 
-    def _get_job_type(self, operation: "Operation") -> Optional[str]:
-        job = self.jobs.get(operation.job_id)
-        if not job:
-            return None
-        return job.metadata.get("job_type")
+    def clear_constraints(self):
+        """
+        Remove all scheduling constraints.
+        """
+        self.constraints.clear()
 
-    def _requires_changeover(
-        self, prev_op: Optional["Operation"], next_op: Optional["Operation"]
+    def _constraints_allow(
+        self, operation: "Operation", resource: "Resource", start_ts: float, end_ts: float
     ) -> bool:
-        if self.changeover_seconds <= 0 or not prev_op or not next_op:
-            return False
-        prev_type = self._get_job_type(prev_op)
-        next_type = self._get_job_type(next_op)
-        if not prev_type or not next_type:
-            return False
-        return prev_type != next_type
+        for constraint in self.constraints:
+            if not constraint.is_feasible(self, operation, resource, start_ts, end_ts):
+                return False
+        return True
+
+    def _apply_constraints_earliest_start(
+        self, operation: "Operation", resource: "Resource", earliest_start: float
+    ) -> float:
+        adjusted = earliest_start
+        for constraint in self.constraints:
+            adjusted = max(
+                adjusted, constraint.adjust_earliest_start(self, operation, resource, adjusted)
+            )
+        return adjusted
+
+    def _get_operation_requirements(self, operation: "Operation") -> List[dict]:
+        """
+        Return normalized resource requirements for an operation.
+        """
+        return operation.get_resource_requirements()
+
+    def _build_assigned_resources(self, requirements: List[dict], assignment_ids: List[str]) -> dict:
+        assigned = {}
+        for req, resource_id in zip(requirements, assignment_ids):
+            resource_type = req["resource_type"]
+            if resource_type in assigned:
+                if isinstance(assigned[resource_type], list):
+                    assigned[resource_type].append(resource_id)
+                else:
+                    assigned[resource_type] = [assigned[resource_type], resource_id]
+            else:
+                assigned[resource_type] = resource_id
+        return assigned
+
+    def _find_earliest_slot_for_assignment(
+        self,
+        operation: "Operation",
+        assignment_ids: List[str],
+        earliest_start: float,
+    ) -> float:
+        t = earliest_start
+        while True:
+            starts = []
+            for resource_id in assignment_ids:
+                resource = self.resources.get(resource_id)
+                if not resource:
+                    raise KeyError(f"Resource {resource_id} not found")
+                start_i = self._find_earliest_slot(resource, operation.duration, t, operation)
+                starts.append(start_i)
+            t_next = max(starts)
+            if t_next == t:
+                return t
+            t = t_next
+
+    def _find_earliest_slot_any_resource(
+        self, operation: "Operation", earliest_start: float
+    ) -> tuple:
+        """
+        Find the earliest feasible slot across all possible resource assignments.
+        """
+        requirements = self._get_operation_requirements(operation)
+        if not requirements:
+            raise ValueError(f"Operation {operation.operation_id} has no resource requirements")
+
+        candidates = []
+        for req in requirements:
+            candidates.append(req["possible_resource_ids"])
+
+        best_start = None
+        best_assignment = None
+        original_assigned = dict(operation.assigned_resources)
+        for assignment in itertools.product(*candidates):
+            valid = True
+            for req, resource_id in zip(requirements, assignment):
+                resource = self.resources.get(resource_id)
+                if not resource or resource.resource_type != req["resource_type"]:
+                    valid = False
+                    break
+            if not valid:
+                continue
+
+            operation.assigned_resources = self._build_assigned_resources(
+                requirements, list(assignment)
+            )
+            start_ts = self._find_earliest_slot_for_assignment(
+                operation, list(assignment), earliest_start
+            )
+            if best_start is None or start_ts < best_start:
+                best_start = start_ts
+                best_assignment = list(assignment)
+                if best_start == earliest_start:
+                    break
+
+        operation.assigned_resources = original_assigned
+
+        if best_start is None:
+            raise RuntimeError(f"No available resource found for {operation.operation_id}")
+
+        assigned_resources = self._build_assigned_resources(requirements, best_assignment)
+        return best_start, assigned_resources
 
     def _find_earliest_slot(
         self,
@@ -152,6 +244,11 @@ class Schedule:
         """
         t = earliest_start
         while True:
+            if operation:
+                adjusted = self._apply_constraints_earliest_start(operation, resource, t)
+                if adjusted > t:
+                    t = adjusted
+                    continue
             # Respect availability windows if defined
             if resource.availability_windows:
                 window_found = False
@@ -182,57 +279,25 @@ class Schedule:
                 t = prev_op.end_time
                 continue
 
-            # Enforce changeover gap after previous operation
-            if operation and prev_op and self._requires_changeover(prev_op, operation):
-                min_start = prev_op.end_time + self.changeover_seconds
-                if t < min_start:
-                    t = min_start
-                    continue
-
             # Check conflict with next operation (including changeover before it)
             if next_op:
                 if t + duration > next_op.start_time:
                     t = next_op.end_time
                     continue
-                if operation and self._requires_changeover(operation, next_op):
-                    min_gap_end = t + duration + self.changeover_seconds
-                    if min_gap_end > next_op.start_time:
-                        t = next_op.end_time
-                        continue
+
+            if operation and not self._constraints_allow(operation, resource, t, t + duration):
+                adjusted = self._apply_constraints_earliest_start(operation, resource, t + 1)
+                if adjusted <= t:
+                    adjusted = t + 1
+                t = adjusted
+                continue
 
             return t
 
-    def _resource_allows_changeover(
-        self, resource: "Resource", operation: "Operation", start_ts: float, end_ts: float
-    ) -> bool:
-        """
-        Validate changeover constraints for a proposed operation placement.
-        """
-        if self.changeover_seconds <= 0 or not resource.schedule:
-            return True
-
-        prev_op = None
-        next_op = None
-        for scheduled_op in resource.schedule:
-            if scheduled_op.start_time < start_ts:
-                prev_op = scheduled_op
-                continue
-            next_op = scheduled_op
-            break
-
-        if prev_op and self._requires_changeover(prev_op, operation):
-            if start_ts < prev_op.end_time + self.changeover_seconds:
-                return False
-
-        if next_op and self._requires_changeover(operation, next_op):
-            if end_ts + self.changeover_seconds > next_op.start_time:
-                return False
-
-        return True
 
     def _find_earliest_no_wait_start(
         self, operations: List["Operation"], earliest_start: float
-    ) -> float:
+    ) -> tuple:
         """
         Find the earliest start time for a chain of operations with no-wait between them.
         """
@@ -240,48 +305,52 @@ class Schedule:
         while True:
             shifted = False
             elapsed = 0.0
+            chosen_assignments = []
             for op in operations:
-                resource_id = self._get_primary_resource_id(op)
-                resource = self.resources[resource_id]
                 start_i = t + elapsed
-                start_i_feasible = self._find_earliest_slot(resource, op.duration, start_i, op)
+                start_i_feasible, assigned_resources = self._find_earliest_slot_any_resource(
+                    op, start_i
+                )
                 if start_i_feasible != start_i:
                     t += start_i_feasible - start_i
                     shifted = True
                     break
+                chosen_assignments.append(assigned_resources)
                 elapsed += op.duration
             if not shifted:
-                return t
+                return t, chosen_assignments
 
     def schedule_job_template(
         self,
         job_template: "JobTemplate",
         instance_id: str,
         start_time: datetime,
-        blocking: Optional[bool] = None,
     ) -> "Job":
         """
         Instantiate a JobTemplate and schedule its operations.
 
-        If blocking is True, operations are scheduled back-to-back with no wait time
-        between them (useful when the job cannot leave a resource until the next step
-        is ready). If blocking is False, each operation is scheduled as early as possible
-        after its predecessors complete.
+        If a BlockingConstraint is present, operations are scheduled back-to-back with
+        no wait time between them (useful when the job cannot leave a resource until
+        the next step is ready). Otherwise, each operation is scheduled as early as
+        possible after its predecessors complete.
         """
         job = job_template.instantiate(instance_id)
         self.add_job(job)
 
-        blocking = job_template.blocking if blocking is None else blocking
+        blocking = self._has_blocking_constraint()
         earliest_start = start_time.timestamp()
 
         if blocking:
-            start_ts = self._find_earliest_no_wait_start(job.operations, earliest_start)
+            start_ts, chosen_assignments = self._find_earliest_no_wait_start(
+                job.operations, earliest_start
+            )
             elapsed = 0.0
-            for op in job.operations:
+            for op, assigned_resources in zip(job.operations, chosen_assignments):
                 op_start = start_ts + elapsed
-                resource_id = self._get_primary_resource_id(op)
-                scheduled = self.schedule_operation(
-                    op.operation_id, resource_id, datetime.fromtimestamp(op_start)
+                scheduled = self.schedule_operation_multi(
+                    op.operation_id,
+                    assigned_resources,
+                    datetime.fromtimestamp(op_start),
                 )
                 if not scheduled:
                     raise RuntimeError(f"Failed to schedule {op.operation_id} at {op_start}")
@@ -289,20 +358,24 @@ class Schedule:
             return job
 
         for op in job.operations:
-            resource_id = self._get_primary_resource_id(op)
             earliest = earliest_start
             if op.precedence:
                 earliest = max(earliest, max(self.operations[p].end_time for p in op.precedence))
-            start_ts = self._find_earliest_slot(
-                self.resources[resource_id], op.duration, earliest, op
-            )
-            scheduled = self.schedule_operation(
-                op.operation_id, resource_id, datetime.fromtimestamp(start_ts)
+            start_ts, assigned_resources = self._find_earliest_slot_any_resource(op, earliest)
+            scheduled = self.schedule_operation_multi(
+                op.operation_id,
+                assigned_resources,
+                datetime.fromtimestamp(start_ts),
             )
             if not scheduled:
                 raise RuntimeError(f"Failed to schedule {op.operation_id} at {start_ts}")
 
         return job
+
+    def _has_blocking_constraint(self) -> bool:
+        from classes.constraints import BlockingConstraint
+
+        return any(isinstance(c, BlockingConstraint) for c in self.constraints)
 
     def schedule_operation(self, operation_id: str, resource_id: str, start_time: datetime) -> bool:
         """
@@ -349,15 +422,30 @@ class Schedule:
         op = self.operations[operation_id]
         resource = self.resources[resource_id]
 
+        requirements = self._get_operation_requirements(op)
+        if len(requirements) > 1:
+            raise ValueError(
+                f"Operation {operation_id} has multiple resource requirements. "
+                "Use schedule_operation_multi."
+            )
+
+        if len(requirements) == 1:
+            req = requirements[0]
+            req_type = req["resource_type"]
+            req_ids = req["possible_resource_ids"]
+        else:
+            req_type = op.resource_type
+            req_ids = op.possible_resource_ids
+
         # Validate resource type compatibility
-        if resource.resource_type != op.resource_type:
+        if req_type and resource.resource_type != req_type:
             raise ValueError(
                 f"Resource with type {resource.resource_type} is not allowed "
-                f"for operation with type {op.resource_type}"
+                f"for operation with type {req_type}"
             )
 
         # Validate resource is in the operation's allowed resource list
-        if resource_id not in op.possible_resource_ids:
+        if req_ids and resource_id not in req_ids:
             raise ValueError(f"Resource {resource_id} is not allowed for operation {operation_id}")
 
         # Convert datetime to timestamp for internal calculations
@@ -368,8 +456,8 @@ class Schedule:
         if not resource.is_available(start_timestamp, end_timestamp):
             return False
 
-        # Enforce changeover constraints between different job types
-        if not self._resource_allows_changeover(resource, op, start_timestamp, end_timestamp):
+        # Enforce custom constraints
+        if not self._constraints_allow(op, resource, start_timestamp, end_timestamp):
             return False
         
         # Verify all precedence constraints are satisfied
@@ -383,6 +471,8 @@ class Schedule:
         op.resource_id = resource_id
         op.start_time = start_timestamp
         op.end_time = end_timestamp
+        if req_type:
+            op.assigned_resources = {req_type: resource_id}
 
         # Add operation to the resource's schedule
         success = resource.add_operation(op)
@@ -392,6 +482,92 @@ class Schedule:
             op.start_time = None
             op.end_time = None
             return False
+
+        return True
+
+    def schedule_operation_multi(
+        self, operation_id: str, assigned_resources: dict, start_time: datetime
+    ) -> bool:
+        """
+        Schedule an operation that requires multiple resources at the same time.
+        """
+        if operation_id not in self.operations:
+            raise KeyError(f"Operation {operation_id} not found")
+
+        op = self.operations[operation_id]
+        requirements = self._get_operation_requirements(op)
+        if not requirements:
+            raise ValueError(f"Operation {operation_id} has no resource requirements")
+
+        # Build flat list of assigned ids in requirement order
+        assignment_ids = []
+        list_positions = {}
+        for req in requirements:
+            req_type = req["resource_type"]
+            if req_type not in assigned_resources:
+                raise ValueError(f"Missing assigned resource for type {req_type}")
+            assigned = assigned_resources[req_type]
+            if isinstance(assigned, list):
+                if not assigned:
+                    raise ValueError(f"No assigned resources provided for type {req_type}")
+                idx = list_positions.get(req_type, 0)
+                if idx >= len(assigned):
+                    raise ValueError(f"Not enough assigned resources provided for type {req_type}")
+                assignment_ids.append(assigned[idx])
+                list_positions[req_type] = idx + 1
+            else:
+                assignment_ids.append(assigned)
+
+        # Validate resources exist and types match
+        resources = []
+        for req, resource_id in zip(requirements, assignment_ids):
+            if resource_id not in self.resources:
+                raise KeyError(f"Resource {resource_id} not found")
+            resource = self.resources[resource_id]
+            if resource.resource_type != req["resource_type"]:
+                raise ValueError(
+                    f"Resource with type {resource.resource_type} is not allowed "
+                    f"for requirement type {req['resource_type']}"
+                )
+            if resource_id not in req["possible_resource_ids"]:
+                raise ValueError(f"Resource {resource_id} is not allowed for operation {operation_id}")
+            resources.append(resource)
+
+        # Convert datetime to timestamp for internal calculations
+        start_timestamp = start_time.timestamp()
+        end_timestamp = start_timestamp + op.duration
+
+        # Check resource availability and constraints
+        original_assigned = dict(op.assigned_resources)
+        op.assigned_resources = assigned_resources
+        for resource in resources:
+            if not resource.is_available(start_timestamp, end_timestamp):
+                op.assigned_resources = original_assigned
+                return False
+            if not self._constraints_allow(op, resource, start_timestamp, end_timestamp):
+                op.assigned_resources = original_assigned
+                return False
+
+        # Verify all precedence constraints are satisfied
+        for pred_op_id in op.precedence:
+            pred_op = self.operations.get(pred_op_id)
+            if not pred_op or pred_op.end_time is None or pred_op.end_time > start_timestamp:
+                return False
+
+        # Assign scheduling info
+        op.resource_id = assignment_ids[0]
+        op.start_time = start_timestamp
+        op.end_time = end_timestamp
+        op.assigned_resources = self._build_assigned_resources(requirements, assignment_ids)
+
+        # Add operation to each resource schedule
+        for resource in resources:
+            if not resource.add_operation(op):
+                # Rollback if any add fails
+                for res in resources:
+                    res.remove_operation(op)
+                op.unschedule()
+                return False
 
         return True
 
@@ -422,10 +598,11 @@ class Schedule:
         if not op.is_scheduled():
             return
 
-        # Remove from resource's schedule
-        resource = self.resources.get(op.resource_id)
-        if resource:
-            resource.remove_operation(op)
+        # Remove from all assigned resources
+        for res_id in op.get_assigned_resource_ids():
+            resource = self.resources.get(res_id)
+            if resource:
+                resource.remove_operation(op)
 
         # Reset scheduling information
         op.resource_id = None
@@ -542,20 +719,66 @@ class Schedule:
             raise KeyError(f"Operation {operation_id} not found")
         
         op = self.operations[operation_id]
+        requirements = self._get_operation_requirements(op)
+        if len(requirements) != 1:
+            raise ValueError(
+                "Operation has multiple resource requirements. "
+                "Use find_available_resource_sets instead."
+            )
         start_ts = start_time.timestamp()
         end_ts = start_ts + op.duration
         
         available = []
-        for resource_id in op.possible_resource_ids:
+        for resource_id in requirements[0]["possible_resource_ids"]:
             resource = self.resources.get(resource_id)
             if resource and resource.is_available(start_ts, end_ts):
-                if not self._resource_allows_changeover(resource, op, start_ts, end_ts):
+                if not self._constraints_allow(op, resource, start_ts, end_ts):
                     continue
                 # Also check precedence constraints
                 if op.can_start_at(start_ts, self.operations):
                     available.append(resource_id)
         
         return available
+
+    def find_available_resource_sets(
+        self, operation_id: str, start_time: datetime
+    ) -> List[dict]:
+        """
+        Find feasible resource assignments for a multi-resource operation at a time.
+        """
+        if operation_id not in self.operations:
+            raise KeyError(f"Operation {operation_id} not found")
+
+        op = self.operations[operation_id]
+        requirements = self._get_operation_requirements(op)
+        if not requirements:
+            raise ValueError(f"Operation {operation_id} has no resource requirements")
+
+        start_ts = start_time.timestamp()
+        end_ts = start_ts + op.duration
+
+        candidates = [req["possible_resource_ids"] for req in requirements]
+        feasible = []
+        for assignment in itertools.product(*candidates):
+            valid = True
+            for req, resource_id in zip(requirements, assignment):
+                resource = self.resources.get(resource_id)
+                if not resource or resource.resource_type != req["resource_type"]:
+                    valid = False
+                    break
+                if not resource.is_available(start_ts, end_ts):
+                    valid = False
+                    break
+                if not self._constraints_allow(op, resource, start_ts, end_ts):
+                    valid = False
+                    break
+            if not valid:
+                continue
+            if not op.can_start_at(start_ts, self.operations):
+                continue
+            feasible.append(self._build_assigned_resources(requirements, list(assignment)))
+
+        return feasible
 
     def get_resource_used_time(
         self,
@@ -682,12 +905,19 @@ class Schedule:
         for op_id, op in self.operations.items():
             if not op.is_scheduled():
                 continue
-            
-            resource = self.resources.get(op.resource_id)
-            if resource and resource.resource_type != op.resource_type:
-                issues["type_mismatches"].append(
-                    f"Operation {op_id} requires {op.resource_type} but scheduled on {resource.resource_type}"
-                )
+
+            for res_id in op.get_assigned_resource_ids():
+                resource = self.resources.get(res_id)
+                if not resource:
+                    continue
+                requirements = op.get_resource_requirements()
+                if not requirements:
+                    continue
+                allowed_types = {req["resource_type"] for req in requirements}
+                if resource.resource_type not in allowed_types:
+                    issues["type_mismatches"].append(
+                        f"Operation {op_id} requires {sorted(allowed_types)} but scheduled on {resource.resource_type}"
+                    )
         
         # Remove empty categories
         return {k: v for k, v in issues.items() if v}
@@ -822,11 +1052,12 @@ class Schedule:
         print(f"\n=== Gantt Chart ===")
         print(f"Schedule: {self.name}")
         
-        # Collect all scheduled operations from all resources
-        all_operations = []
+        # Collect all scheduled operations (dedupe across resources)
+        all_operations = {}
         for resource in self.resources.values():
             for operation in resource.schedule:
-                all_operations.append(operation)
+                all_operations[operation.operation_id] = operation
+        all_operations = list(all_operations.values())
         
         if not all_operations:
             print("No operations scheduled")
@@ -870,10 +1101,19 @@ class Schedule:
                 duration_hours = (operation.end_time - operation.start_time) / 3600
                 
                 # Create visual bar (4 characters per hour of duration)
+                # Use ASCII to avoid Windows console encoding issues.
                 bar_length = max(1, int(duration_hours * 4))
-                bar = "█" * bar_length
+                bar = "#" * bar_length
                 
-                print(f"  {operation.operation_id:>8}: {start_dt.strftime('%a %H:%M')} |{bar}| {end_dt.strftime('%H:%M')} [{operation.resource_id}] ({duration_hours:.1f}h)")
+                resource_ids = operation.get_assigned_resource_ids() or (
+                    [operation.resource_id] if operation.resource_id else []
+                )
+                resource_label = ",".join(resource_ids) if resource_ids else "unassigned"
+                print(
+                    f"  {operation.operation_id:>8}: {start_dt.strftime('%a %H:%M')} "
+                    f"|{bar}| {end_dt.strftime('%H:%M')} "
+                    f"[{resource_label}] ({duration_hours:.1f}h)"
+                )
             
             print()
 
@@ -903,11 +1143,11 @@ class Schedule:
             print("Error: matplotlib is required for visual Gantt charts. Install with: pip install matplotlib")
             return
         
-        # Collect all operations and sort by start time
+        # Collect all operations with resource context and sort by start time
         all_operations = []
         for resource in self.resources.values():
             for operation in resource.schedule:
-                all_operations.append(operation)
+                all_operations.append((operation, resource.resource_id))
         
         if not all_operations:
             print("No operations scheduled to display")
@@ -915,7 +1155,7 @@ class Schedule:
         
         # Group operations by job for color coding
         jobs_operations = {}
-        for operation in all_operations:
+        for operation, _ in all_operations:
             job_id = operation.job_id
             if job_id not in jobs_operations:
                 jobs_operations[job_id] = []
@@ -924,11 +1164,21 @@ class Schedule:
         # Create figure and axis
         fig, ax = plt.subplots(figsize=(14, 8))
         
-        # Define colors for different jobs
+        # Define colors for different job types
         colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', '#54A0FF']
-        job_colors = {}
-        for i, job_id in enumerate(sorted(jobs_operations.keys())):
-            job_colors[job_id] = colors[i % len(colors)]
+        job_type_colors = {}
+        job_type_by_id = {}
+        for job_id in sorted(jobs_operations.keys()):
+            job = self.jobs.get(job_id)
+            job_type = None
+            if job:
+                job_type = job.metadata.get("job_type") or job.metadata.get("module_type")
+            if not job_type:
+                job_type = job_id
+            job_type_by_id[job_id] = job_type
+
+        for i, job_type in enumerate(sorted(set(job_type_by_id.values()))):
+            job_type_colors[job_type] = colors[i % len(colors)]
         
         # Get all resources for y-axis
         resources = list(self.resources.keys())
@@ -938,13 +1188,13 @@ class Schedule:
         y_positions = {resource: i for i, resource in enumerate(resources)}
         
         # Plot operations as colored rectangles
-        for operation in all_operations:
+        for operation, resource_id in all_operations:
             start_dt = datetime.fromtimestamp(operation.start_time)
             end_dt = datetime.fromtimestamp(operation.end_time)
             duration = end_dt - start_dt
             
-            y_pos = y_positions[operation.resource_id]
-            color = job_colors[operation.job_id]
+            y_pos = y_positions[resource_id]
+            color = job_type_colors[job_type_by_id[operation.job_id]]
             
             # Create rectangle for the operation
             # Convert duration to matplotlib date units (days) for proper x-axis scaling
@@ -965,10 +1215,11 @@ class Schedule:
             # Dark backgrounds get white text, light backgrounds get black text
             rgb_sum = sum(int(color[i:i+2], 16) for i in (1, 3, 5))
             text_color = 'white' if rgb_sum < 300 else 'black'
+            label = operation.operation_id.split("_")[-1]
             ax.text(
                 mdates.date2num(mid_time),
                 y_pos,
-                operation.operation_id,
+                label,
                 ha='center',
                 va='center',
                 fontsize=8,
@@ -988,8 +1239,8 @@ class Schedule:
         
         # Set time range
         if all_operations:
-            earliest_start = min(op.start_time for op in all_operations)
-            latest_end = max(op.end_time for op in all_operations)
+            earliest_start = min(op.start_time for op, _ in all_operations)
+            latest_end = max(op.end_time for op, _ in all_operations)
             start_dt = datetime.fromtimestamp(earliest_start)
             end_dt = datetime.fromtimestamp(latest_end)
             
@@ -1011,14 +1262,10 @@ class Schedule:
         
         # Create legend
         legend_elements = []
-        for job_id in sorted(jobs_operations.keys()):
-            job = self.jobs.get(job_id)
-            customer = job.metadata.get('customer', 'Unknown') if job else 'Unknown'
-            priority = job.metadata.get('priority', 'Unknown') if job else 'Unknown'
-            
+        for job_type in sorted(job_type_colors.keys()):
             legend_elements.append(
-                Rectangle((0, 0), 1, 1, facecolor=job_colors[job_id], alpha=0.7,
-                         label=f'{job_id} ({customer})')
+                Rectangle((0, 0), 1, 1, facecolor=job_type_colors[job_type], alpha=0.7,
+                         label=f'{job_type}')
             )
         
         ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))
