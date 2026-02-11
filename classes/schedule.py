@@ -1117,7 +1117,13 @@ class Schedule:
             
             print()
 
-    def show_visual_gantt_chart(self):
+    def show_visual_gantt_chart(
+        self,
+        resource_ids: Optional[List[str]] = None,
+        resource_type_filter: Optional[List[str]] = None,
+        title_suffix: Optional[str] = None,
+        block: bool = True,
+    ):
         """
         Create and display a visual Gantt chart using matplotlib.
         
@@ -1143,9 +1149,16 @@ class Schedule:
             print("Error: matplotlib is required for visual Gantt charts. Install with: pip install matplotlib")
             return
         
+        # Filter resources if requested
+        resources = list(self.resources.values())
+        if resource_ids is not None:
+            resources = [r for r in resources if r.resource_id in resource_ids]
+        if resource_type_filter is not None:
+            resources = [r for r in resources if r.resource_type in resource_type_filter]
+
         # Collect all operations with resource context and sort by start time
         all_operations = []
-        for resource in self.resources.values():
+        for resource in resources:
             for operation in resource.schedule:
                 all_operations.append((operation, resource.resource_id))
         
@@ -1181,11 +1194,10 @@ class Schedule:
             job_type_colors[job_type] = colors[i % len(colors)]
         
         # Get all resources for y-axis
-        resources = list(self.resources.keys())
-        resources.sort()
+        resource_ids_sorted = sorted([r.resource_id for r in resources])
         
         # Create y-position mapping
-        y_positions = {resource: i for i, resource in enumerate(resources)}
+        y_positions = {resource_id: i for i, resource_id in enumerate(resource_ids_sorted)}
         
         # Plot operations as colored rectangles
         for operation, resource_id in all_operations:
@@ -1215,7 +1227,7 @@ class Schedule:
             # Dark backgrounds get white text, light backgrounds get black text
             rgb_sum = sum(int(color[i:i+2], 16) for i in (1, 3, 5))
             text_color = 'white' if rgb_sum < 300 else 'black'
-            label = operation.operation_id.split("_")[-1]
+            label = operation.metadata.get("label") or operation.operation_id.split("_")[-1]
             ax.text(
                 mdates.date2num(mid_time),
                 y_pos,
@@ -1228,9 +1240,11 @@ class Schedule:
             )
         
         # Set up the plot
-        ax.set_ylim(-0.5, len(resources) - 0.5)
-        ax.set_yticks(range(len(resources)))
-        ax.set_yticklabels([f"{res}\n({self.resources[res].resource_name})" for res in resources])
+        ax.set_ylim(-0.5, len(resource_ids_sorted) - 0.5)
+        ax.set_yticks(range(len(resource_ids_sorted)))
+        ax.set_yticklabels([
+            f"{res}\n({self.resources[res].resource_name})" for res in resource_ids_sorted
+        ])
         
         # Format x-axis for time
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
@@ -1255,7 +1269,10 @@ class Schedule:
         ax.grid(True, alpha=0.3)
         ax.set_xlabel('Time', fontsize=12)
         ax.set_ylabel('Resources', fontsize=12)
-        ax.set_title(f'{self.name}\nGantt Chart - {self.start_date.strftime("%Y-%m-%d")}', fontsize=14, fontweight='bold')
+        title = f'{self.name}\nGantt Chart - {self.start_date.strftime("%Y-%m-%d")}'
+        if title_suffix:
+            title = f"{title} ({title_suffix})"
+        ax.set_title(title, fontsize=14, fontweight='bold')
         
         # Rotate x-axis labels for better readability
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
@@ -1274,6 +1291,6 @@ class Schedule:
         plt.tight_layout()
         
         # Show the plot
-        plt.show()
+        plt.show(block=block)
         
         return fig, ax

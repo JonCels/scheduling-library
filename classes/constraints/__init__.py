@@ -8,6 +8,7 @@ from .changeover import ChangeoverConstraint
 from .due_date import DueDateConstraint
 from .wip import WipLimitConstraint
 from .time_lag import TimeLagConstraint
+from .shift import ShiftConstraint
 
 __all__ = [
     "Constraint",
@@ -16,4 +17,5 @@ __all__ = [
     "DueDateConstraint",
     "WipLimitConstraint",
     "TimeLagConstraint",
+    "ShiftConstraint",
 ]
