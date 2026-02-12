@@ -3,6 +3,7 @@ Example: vehicle emissions testing plant (constraints exploration).
 """
 
 from datetime import datetime, timedelta, time
+from collections import defaultdict
 import sys
 import os
 
@@ -16,6 +17,142 @@ from classes.job import Job
 from classes.resource import Resource
 from classes.schedule import Schedule
 from classes.constraints import ChangeoverConstraint, ShiftConstraint
+
+
+def compute_priority_ranks_naive(tests):
+    """
+    Assign a unique global rank to each test (1 = highest priority).
+    Uses existing 1-5 priority as the primary driver, then deterministic tie-breakers.
+    """
+    ranked_tests = sorted(
+        tests,
+        key=lambda op: (
+            op.metadata.get("priority", 5),
+            op.duration,
+            op.operation_id,
+        ),
+    )
+    for rank, op in enumerate(ranked_tests, start=1):
+        op.metadata["priority_rank"] = rank
+
+
+def compute_priority_ranks_site_demand(tests):
+    """
+    Assign unique ranks using site-demand-weighted importance.
+
+    Steps:
+    - Convert bucket priority (1-5) into a base importance score.
+    - Compute average importance demand per site.
+    - Increase test score when it can run on fewer sites.
+    """
+    site_importance_values = defaultdict(list)
+    test_sites = {}
+
+    for op in tests:
+        base_priority = op.metadata.get("priority", 5)
+        base_importance = max(1.0, 6.0 - float(base_priority))
+
+        possible_sites = []
+        for req in op.resource_requirements:
+            if req.get("resource_type") == "site":
+                possible_sites = req.get("possible_resource_ids", [])
+                break
+
+        test_sites[op.operation_id] = possible_sites
+        for site_id in possible_sites:
+            site_importance_values[site_id].append(base_importance)
+
+    site_avg_importance = {
+        site_id: (sum(values) / len(values))
+        for site_id, values in site_importance_values.items()
+        if values
+    }
+
+    for op in tests:
+        possible_sites = test_sites.get(op.operation_id, [])
+        flexibility_count = len(possible_sites) if possible_sites else 1
+        avg_site_demand = (
+            sum(site_avg_importance.get(site_id, 0.0) for site_id in possible_sites) / flexibility_count
+            if possible_sites
+            else 0.0
+        )
+        flexibility_weight = 1.0 / flexibility_count
+        weighted_priority_score = avg_site_demand * (1.0 + flexibility_weight)
+
+        op.metadata["avg_site_importance"] = avg_site_demand
+        op.metadata["site_options"] = flexibility_count
+        op.metadata["priority_score"] = weighted_priority_score
+
+    ranked_tests = sorted(
+        tests,
+        key=lambda op: (
+            -op.metadata.get("priority_score", 0.0),
+            op.metadata.get("priority", 5),
+            op.duration,
+            op.operation_id,
+        ),
+    )
+    for rank, op in enumerate(ranked_tests, start=1):
+        op.metadata["priority_rank"] = rank
+
+    return site_avg_importance
+
+
+def compute_priority_ranks_site_demand_with_precedence(tests, propagation_weight=0.85):
+    """
+    Assign unique ranks using site-demand + flexibility, then propagate urgency backward
+    across precedence edges so critical descendants pull predecessors earlier.
+
+    propagation_weight controls how much downstream urgency is inherited.
+    """
+    site_avg_importance = compute_priority_ranks_site_demand(tests)
+    op_by_id = {op.operation_id: op for op in tests}
+
+    for op in tests:
+        op.metadata["base_priority_score"] = op.metadata.get("priority_score", 0.0)
+        op.metadata["effective_priority_score"] = op.metadata["base_priority_score"]
+
+    # Reverse edges: predecessor -> list of children
+    children_by_op = defaultdict(list)
+    for op in tests:
+        for pred_id in op.precedence:
+            if pred_id in op_by_id:
+                children_by_op[pred_id].append(op.operation_id)
+
+    # Fixed-point propagation in reverse topological spirit.
+    # A predecessor gets lifted if it unlocks high-urgency descendants.
+    for _ in range(len(tests)):
+        changed = False
+        for op in tests:
+            child_scores = [
+                op_by_id[child_id].metadata.get("effective_priority_score", 0.0)
+                for child_id in children_by_op.get(op.operation_id, [])
+            ]
+            inherited = max(child_scores) if child_scores else 0.0
+            new_effective = max(
+                op.metadata["base_priority_score"],
+                propagation_weight * inherited,
+            )
+            if abs(new_effective - op.metadata["effective_priority_score"]) > 1e-9:
+                op.metadata["effective_priority_score"] = new_effective
+                changed = True
+        if not changed:
+            break
+
+    ranked_tests = sorted(
+        tests,
+        key=lambda op: (
+            -op.metadata.get("effective_priority_score", 0.0),
+            -op.metadata.get("base_priority_score", 0.0),
+            op.metadata.get("priority", 5),
+            op.duration,
+            op.operation_id,
+        ),
+    )
+    for rank, op in enumerate(ranked_tests, start=1):
+        op.metadata["priority_rank"] = rank
+
+    return site_avg_importance
 
 
 def main():
@@ -71,7 +208,7 @@ def main():
     # Example tests for vehicles (each test is an operation)
     tests = [
         Operation(
-            operation_id="V001_TEST_A",
+            operation_id="T001",
             job_id="VEHICLE_001",
             duration=timedelta(hours=2).total_seconds(),
             resource_requirements=[
@@ -82,18 +219,18 @@ def main():
             metadata={"test_type": "A", "priority": 1},
         ),
         Operation(
-            operation_id="V001_TEST_B",
+            operation_id="T002",
             job_id="VEHICLE_001",
             duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_4"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
             ],
-            precedence=["V001_TEST_A"],
+            precedence=["T001"],
             metadata={"test_type": "B", "priority": 2},
         ),
         Operation(
-            operation_id="V002_TEST_A",
+            operation_id="T003",
             job_id="VEHICLE_002",
             duration=timedelta(hours=2).total_seconds(),
             resource_requirements=[
@@ -104,7 +241,7 @@ def main():
             metadata={"test_type": "A", "priority": 3},
         ),
         Operation(
-            operation_id="V003_TEST_C",
+            operation_id="T004",
             job_id="VEHICLE_003",
             duration=timedelta(hours=3).total_seconds(),
             resource_requirements=[
@@ -115,7 +252,7 @@ def main():
             metadata={"test_type": "C", "priority": 1},
         ),
         Operation(
-            operation_id="V004_TEST_D",
+            operation_id="T005",
             job_id="VEHICLE_001",
             duration=timedelta(hours=1).total_seconds(),
             resource_requirements=[
@@ -126,7 +263,7 @@ def main():
             metadata={"test_type": "D", "priority": 3},
         ),
         Operation(
-            operation_id="V002_TEST_B",
+            operation_id="T006",
             job_id="VEHICLE_002",
             duration=timedelta(hours=1.25).total_seconds(),
             resource_requirements=[
@@ -137,7 +274,7 @@ def main():
             metadata={"test_type": "B", "priority": 2},
         ),
         Operation(
-            operation_id="V002_TEST_C",
+            operation_id="T007",
             job_id="VEHICLE_002",
             duration=timedelta(hours=2.5).total_seconds(),
             resource_requirements=[
@@ -148,7 +285,7 @@ def main():
             metadata={"test_type": "C", "priority": 4},
         ),
         Operation(
-            operation_id="V003_TEST_A",
+            operation_id="T008",
             job_id="VEHICLE_003",
             duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
@@ -159,18 +296,18 @@ def main():
             metadata={"test_type": "A", "priority": 2},
         ),
         Operation(
-            operation_id="V003_TEST_E",
+            operation_id="T009",
             job_id="VEHICLE_003",
             duration=timedelta(hours=0.75).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
             ],
-            precedence=["V003_TEST_C"],
+            precedence=["T004"],
             metadata={"test_type": "E", "priority": 1},
         ),
         Operation(
-            operation_id="V004_TEST_A",
+            operation_id="T010",
             job_id="VEHICLE_004",
             duration=timedelta(hours=1.75).total_seconds(),
             resource_requirements=[
@@ -181,7 +318,7 @@ def main():
             metadata={"test_type": "A", "priority": 2},
         ),
         Operation(
-            operation_id="V005_TEST_E",
+            operation_id="T011",
             job_id="VEHICLE_005",
             duration=timedelta(hours=0.75).total_seconds(),
             resource_requirements=[
@@ -192,7 +329,7 @@ def main():
             metadata={"test_type": "E", "priority": 2},
         ),
         Operation(
-            operation_id="V006_TEST_E",
+            operation_id="T012",
             job_id="VEHICLE_006",
             duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
@@ -203,7 +340,7 @@ def main():
             metadata={"test_type": "E", "priority": 3},
         ),
         Operation(
-            operation_id="V007_TEST_A",
+            operation_id="T013",
             job_id="VEHICLE_007",
             duration=timedelta(hours=2.25).total_seconds(),
             resource_requirements=[
@@ -214,7 +351,7 @@ def main():
             metadata={"test_type": "A", "priority": 2},
         ),
         Operation(
-            operation_id="V008_TEST_B",
+            operation_id="T014",
             job_id="VEHICLE_008",
             duration=timedelta(hours=1.25).total_seconds(),
             resource_requirements=[
@@ -225,7 +362,7 @@ def main():
             metadata={"test_type": "B", "priority": 1},
         ),
         Operation(
-            operation_id="V009_TEST_C",
+            operation_id="T015",
             job_id="VEHICLE_009",
             duration=timedelta(hours=2.75).total_seconds(),
             resource_requirements=[
@@ -236,29 +373,29 @@ def main():
             metadata={"test_type": "C", "priority": 3},
         ),
         Operation(
-            operation_id="V001_TEST_E",
+            operation_id="T016",
             job_id="VEHICLE_001",
             duration=timedelta(hours=0.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
             ],
-            precedence=["V001_TEST_B"],
+            precedence=["T002"],
             metadata={"test_type": "E", "priority": 2},
         ),
         Operation(
-            operation_id="V003_TEST_B",
+            operation_id="T017",
             job_id="VEHICLE_003",
             duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
             ],
-            precedence=["V003_TEST_A"],
+            precedence=["T008"],
             metadata={"test_type": "B", "priority": 2},
         ),
         Operation(
-            operation_id="V010_TEST_A",
+            operation_id="T018",
             job_id="VEHICLE_010",
             duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
@@ -269,7 +406,7 @@ def main():
             metadata={"test_type": "A", "priority": 2},
         ),
         Operation(
-            operation_id="V011_TEST_B",
+            operation_id="T019",
             job_id="VEHICLE_011",
             duration=timedelta(hours=2.25).total_seconds(),
             resource_requirements=[
@@ -280,7 +417,7 @@ def main():
             metadata={"test_type": "B", "priority": 3},
         ),
         Operation(
-            operation_id="V012_TEST_C",
+            operation_id="T020",
             job_id="VEHICLE_012",
             duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
@@ -291,7 +428,7 @@ def main():
             metadata={"test_type": "C", "priority": 1},
         ),
         Operation(
-            operation_id="V013_TEST_D",
+            operation_id="T021",
             job_id="VEHICLE_013",
             duration=timedelta(hours=2.0).total_seconds(),
             resource_requirements=[
@@ -302,7 +439,7 @@ def main():
             metadata={"test_type": "D", "priority": 4},
         ),
         Operation(
-            operation_id="V014_TEST_E",
+            operation_id="T022",
             job_id="VEHICLE_014",
             duration=timedelta(hours=0.75).total_seconds(),
             resource_requirements=[
@@ -313,7 +450,7 @@ def main():
             metadata={"test_type": "E", "priority": 2},
         ),
         Operation(
-            operation_id="V015_TEST_A",
+            operation_id="T023",
             job_id="VEHICLE_015",
             duration=timedelta(hours=1.25).total_seconds(),
             resource_requirements=[
@@ -324,7 +461,7 @@ def main():
             metadata={"test_type": "A", "priority": 1},
         ),
         Operation(
-            operation_id="V016_TEST_B",
+            operation_id="T024",
             job_id="VEHICLE_016",
             duration=timedelta(hours=2.5).total_seconds(),
             resource_requirements=[
@@ -335,7 +472,7 @@ def main():
             metadata={"test_type": "B", "priority": 3},
         ),
         Operation(
-            operation_id="V017_TEST_C",
+            operation_id="T025",
             job_id="VEHICLE_017",
             duration=timedelta(hours=1.75).total_seconds(),
             resource_requirements=[
@@ -346,7 +483,7 @@ def main():
             metadata={"test_type": "C", "priority": 2},
         ),
         Operation(
-            operation_id="V018_TEST_D",
+            operation_id="T026",
             job_id="VEHICLE_018",
             duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
@@ -357,7 +494,7 @@ def main():
             metadata={"test_type": "D", "priority": 4},
         ),
         Operation(
-            operation_id="V019_TEST_E",
+            operation_id="T027",
             job_id="VEHICLE_019",
             duration=timedelta(hours=2.0).total_seconds(),
             resource_requirements=[
@@ -368,7 +505,7 @@ def main():
             metadata={"test_type": "E", "priority": 2},
         ),
         Operation(
-            operation_id="V020_TEST_A",
+            operation_id="T028",
             job_id="VEHICLE_020",
             duration=timedelta(hours=1.25).total_seconds(),
             resource_requirements=[
@@ -379,7 +516,7 @@ def main():
             metadata={"test_type": "A", "priority": 2},
         ),
         Operation(
-            operation_id="V021_TEST_B",
+            operation_id="T029",
             job_id="VEHICLE_021",
             duration=timedelta(hours=2.0).total_seconds(),
             resource_requirements=[
@@ -390,7 +527,7 @@ def main():
             metadata={"test_type": "B", "priority": 3},
         ),
         Operation(
-            operation_id="V022_TEST_C",
+            operation_id="T030",
             job_id="VEHICLE_022",
             duration=timedelta(hours=1.75).total_seconds(),
             resource_requirements=[
@@ -401,7 +538,7 @@ def main():
             metadata={"test_type": "C", "priority": 1},
         ),
         Operation(
-            operation_id="V023_TEST_D",
+            operation_id="T031",
             job_id="VEHICLE_023",
             duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
@@ -412,7 +549,7 @@ def main():
             metadata={"test_type": "D", "priority": 4},
         ),
         Operation(
-            operation_id="V024_TEST_E",
+            operation_id="T032",
             job_id="VEHICLE_024",
             duration=timedelta(hours=2.25).total_seconds(),
             resource_requirements=[
@@ -424,16 +561,10 @@ def main():
         ),
     ]
 
-    # Normalize operation IDs to simple numeric strings
-    id_map = {op.operation_id: str(i + 1).zfill(3) for i, op in enumerate(tests)}
     for op in tests:
-        op.operation_id = id_map[op.operation_id]
-        op.precedence = [id_map[p] for p in op.precedence]
+        op.metadata["label"] = op.operation_id
 
-    for op in tests:
-        job_number = op.job_id.replace("VEHICLE_", "")
-        test_type = op.metadata.get("test_type", "T")
-        op.metadata["label"] = f"{job_number}-{test_type}"
+    site_demand_map = compute_priority_ranks_site_demand_with_precedence(tests)
 
     # Jobs are vehicles (each vehicle has one or more tests)
     schedule.add_job(Job("VEHICLE_001", [tests[0], tests[1], tests[4], tests[15]], metadata={"vehicle": "V001"}))
@@ -500,7 +631,7 @@ def main():
         ]
         if not ready:
             break
-        ready.sort(key=lambda op: (op.metadata.get("priority", 5), op.duration))
+        ready.sort(key=lambda op: op.metadata.get("priority_rank", 10**9))
 
         progress = False
         for op in ready:
@@ -532,11 +663,32 @@ def main():
         unscheduled_tests.append(op)
         unscheduled.remove(op)
 
+    stats = schedule.get_schedule_statistics()
+    total_demand_seconds = sum(op.duration for op in tests)
+    scheduled_seconds = sum(op.duration for op in schedule.get_scheduled_operations().values())
+    unscheduled_seconds = total_demand_seconds - scheduled_seconds
+    schedule_quality_score = (
+        (scheduled_seconds / total_demand_seconds) * 100 if total_demand_seconds > 0 else 0.0
+    )
+
     print("Scheduled operations:", len(schedule.get_scheduled_operations()))
+    print("\nSchedule quality metrics:")
+    print(f"  Scheduled workload: {scheduled_seconds / 3600:.2f}h / {total_demand_seconds / 3600:.2f}h")
+    print(f"  Unscheduled workload time: {unscheduled_seconds / 3600:.2f}h")
+    print(f"  Workload coverage score: {schedule_quality_score:.1f}%")
+    print(f"  Makespan: {stats['makespan_hours']:.2f}h")
+    print(f"  Avg resource utilization: {stats['avg_resource_utilization']:.1%}")
+    print("\nAvg site importance demand:")
+    for site_id in sorted(site_demand_map):
+        print(f"  {site_id}: {site_demand_map[site_id]:.2f}")
+
     if unscheduled_tests:
         print("\nUnscheduled tests:")
         for op in unscheduled_tests:
-            print(f"  {op.operation_id} (priority {op.metadata.get('priority', 5)})")
+            print(
+                f"  {op.operation_id} "
+                f"(rank {op.metadata.get('priority_rank')}, priority {op.metadata.get('priority', 5)})"
+            )
 
     schedule.create_gantt_chart()
     schedule.show_visual_gantt_chart(resource_type_filter=["site"], title_suffix="Sites", block=False)
