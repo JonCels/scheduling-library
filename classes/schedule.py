@@ -1177,8 +1177,14 @@ class Schedule:
         # Create figure and axis
         fig, ax = plt.subplots(figsize=(14, 8))
         
-        # Define colors for different job types
-        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', '#54A0FF']
+        # Generate enough visually distinct colors so each job/vehicle can be unique
+        # even when the chart has many jobs.
+        def _rgba_to_hex(rgba):
+            r = int(round(rgba[0] * 255))
+            g = int(round(rgba[1] * 255))
+            b = int(round(rgba[2] * 255))
+            return f"#{r:02X}{g:02X}{b:02X}"
+
         job_type_colors = {}
         job_type_by_id = {}
         for job_id in sorted(jobs_operations.keys()):
@@ -1190,8 +1196,10 @@ class Schedule:
                 job_type = job_id
             job_type_by_id[job_id] = job_type
 
-        for i, job_type in enumerate(sorted(set(job_type_by_id.values()))):
-            job_type_colors[job_type] = colors[i % len(colors)]
+        unique_job_types = sorted(set(job_type_by_id.values()))
+        color_map = plt.cm.get_cmap("hsv", len(unique_job_types) + 1)
+        for i, job_type in enumerate(unique_job_types):
+            job_type_colors[job_type] = _rgba_to_hex(color_map(i))
         
         # Get all resources for y-axis
         resource_ids_sorted = sorted([r.resource_id for r in resources])

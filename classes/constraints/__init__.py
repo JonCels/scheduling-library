@@ -9,6 +9,7 @@ from .due_date import DueDateConstraint
 from .wip import WipLimitConstraint
 from .time_lag import TimeLagConstraint
 from .shift import ShiftConstraint
+from .soak import SoakConstraint
 
 __all__ = [
     "Constraint",
@@ -18,4 +19,5 @@ __all__ = [
     "WipLimitConstraint",
     "TimeLagConstraint",
     "ShiftConstraint",
+    "SoakConstraint",
 ]

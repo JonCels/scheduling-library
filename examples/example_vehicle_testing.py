@@ -2,21 +2,17 @@
 Example: vehicle emissions testing plant (constraints exploration).
 """
 
-from datetime import datetime, timedelta, time
+from datetime import datetime
 from collections import defaultdict
 import sys
 import os
 
 # Ensure repo root is on the path so "classes" imports work
-ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+    sys.path.insert(0, ROOT_DIR)
 
-from classes.operation import Operation
-from classes.job import Job
-from classes.resource import Resource
-from classes.schedule import Schedule
-from classes.constraints import ChangeoverConstraint, ShiftConstraint
+from vehicle_testing_model import build_vehicle_testing_problem
 
 
 def compute_priority_ranks_naive(tests):
@@ -155,529 +151,392 @@ def compute_priority_ranks_site_demand_with_precedence(tests, propagation_weight
     return site_avg_importance
 
 
-def main():
-    start_date = datetime(2026, 3, 3, 6, 0)
-    end_date = datetime(2026, 3, 3, 18, 0)
+def compute_priority_ranks_importance_throughput(
+    tests,
+    importance_weight=1.4,
+    scarcity_weight=1.2,
+    unlock_weight=0.45,
+    short_test_bonus_weight=0.55,
+):
+    """
+    Balance high-importance tests with throughput (getting many tests done).
 
-    schedule = Schedule(
-        name="Vehicle Emissions Testing - Day 1",
-        schedule_id="VEH_TEST_DAY_1",
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    # Resources: sites/garages with different equipment
-    sites = [
-        Resource("Site_1", "site", "Site 1"),
-        Resource("Site_2", "site", "Site 2"),
-        Resource("Site_3", "site", "Site 3"),
-        Resource("Site_4", "site", "Site 4"),
-        Resource("Site_5", "site", "Site 5"),
-    ]
-    vehicles = [
-        Resource("VEHICLE_001", "vehicle", "Vehicle 001"),
-        Resource("VEHICLE_002", "vehicle", "Vehicle 002"),
-        Resource("VEHICLE_003", "vehicle", "Vehicle 003"),
-        Resource("VEHICLE_004", "vehicle", "Vehicle 004"),
-        Resource("VEHICLE_005", "vehicle", "Vehicle 005"),
-        Resource("VEHICLE_006", "vehicle", "Vehicle 006"),
-        Resource("VEHICLE_007", "vehicle", "Vehicle 007"),
-        Resource("VEHICLE_008", "vehicle", "Vehicle 008"),
-        Resource("VEHICLE_009", "vehicle", "Vehicle 009"),
-        Resource("VEHICLE_010", "vehicle", "Vehicle 010"),
-        Resource("VEHICLE_011", "vehicle", "Vehicle 011"),
-        Resource("VEHICLE_012", "vehicle", "Vehicle 012"),
-        Resource("VEHICLE_013", "vehicle", "Vehicle 013"),
-        Resource("VEHICLE_014", "vehicle", "Vehicle 014"),
-        Resource("VEHICLE_015", "vehicle", "Vehicle 015"),
-        Resource("VEHICLE_016", "vehicle", "Vehicle 016"),
-        Resource("VEHICLE_017", "vehicle", "Vehicle 017"),
-        Resource("VEHICLE_018", "vehicle", "Vehicle 018"),
-        Resource("VEHICLE_019", "vehicle", "Vehicle 019"),
-        Resource("VEHICLE_020", "vehicle", "Vehicle 020"),
-        Resource("VEHICLE_021", "vehicle", "Vehicle 021"),
-        Resource("VEHICLE_022", "vehicle", "Vehicle 022"),
-        Resource("VEHICLE_023", "vehicle", "Vehicle 023"),
-        Resource("VEHICLE_024", "vehicle", "Vehicle 024"),
-    ]
-    for site in sites:
-        schedule.add_resource(site)
-    for vehicle in vehicles:
-        schedule.add_resource(vehicle)
-
-    # Example tests for vehicles (each test is an operation)
-    tests = [
-        Operation(
-            operation_id="T001",
-            job_id="VEHICLE_001",
-            duration=timedelta(hours=2).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 1},
-        ),
-        Operation(
-            operation_id="T002",
-            job_id="VEHICLE_001",
-            duration=timedelta(hours=1.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
-            ],
-            precedence=["T001"],
-            metadata={"test_type": "B", "priority": 2},
-        ),
-        Operation(
-            operation_id="T003",
-            job_id="VEHICLE_002",
-            duration=timedelta(hours=2).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_002"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 3},
-        ),
-        Operation(
-            operation_id="T004",
-            job_id="VEHICLE_003",
-            duration=timedelta(hours=3).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 1},
-        ),
-        Operation(
-            operation_id="T005",
-            job_id="VEHICLE_001",
-            duration=timedelta(hours=1).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "D", "priority": 3},
-        ),
-        Operation(
-            operation_id="T006",
-            job_id="VEHICLE_002",
-            duration=timedelta(hours=1.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_002"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "B", "priority": 2},
-        ),
-        Operation(
-            operation_id="T007",
-            job_id="VEHICLE_002",
-            duration=timedelta(hours=2.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_002"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 4},
-        ),
-        Operation(
-            operation_id="T008",
-            job_id="VEHICLE_003",
-            duration=timedelta(hours=1.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 2},
-        ),
-        Operation(
-            operation_id="T009",
-            job_id="VEHICLE_003",
-            duration=timedelta(hours=0.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
-            ],
-            precedence=["T004"],
-            metadata={"test_type": "E", "priority": 1},
-        ),
-        Operation(
-            operation_id="T010",
-            job_id="VEHICLE_004",
-            duration=timedelta(hours=1.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_004"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 2},
-        ),
-        Operation(
-            operation_id="T011",
-            job_id="VEHICLE_005",
-            duration=timedelta(hours=0.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_005"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "E", "priority": 2},
-        ),
-        Operation(
-            operation_id="T012",
-            job_id="VEHICLE_006",
-            duration=timedelta(hours=1.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_006"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "E", "priority": 3},
-        ),
-        Operation(
-            operation_id="T013",
-            job_id="VEHICLE_007",
-            duration=timedelta(hours=2.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_007"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 2},
-        ),
-        Operation(
-            operation_id="T014",
-            job_id="VEHICLE_008",
-            duration=timedelta(hours=1.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_008"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "B", "priority": 1},
-        ),
-        Operation(
-            operation_id="T015",
-            job_id="VEHICLE_009",
-            duration=timedelta(hours=2.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_009"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 3},
-        ),
-        Operation(
-            operation_id="T016",
-            job_id="VEHICLE_001",
-            duration=timedelta(hours=0.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
-            ],
-            precedence=["T002"],
-            metadata={"test_type": "E", "priority": 2},
-        ),
-        Operation(
-            operation_id="T017",
-            job_id="VEHICLE_003",
-            duration=timedelta(hours=1.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_003"]},
-            ],
-            precedence=["T008"],
-            metadata={"test_type": "B", "priority": 2},
-        ),
-        Operation(
-            operation_id="T018",
-            job_id="VEHICLE_010",
-            duration=timedelta(hours=1.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_010"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 2},
-        ),
-        Operation(
-            operation_id="T019",
-            job_id="VEHICLE_011",
-            duration=timedelta(hours=2.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_011"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "B", "priority": 3},
-        ),
-        Operation(
-            operation_id="T020",
-            job_id="VEHICLE_012",
-            duration=timedelta(hours=1.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_012"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 1},
-        ),
-        Operation(
-            operation_id="T021",
-            job_id="VEHICLE_013",
-            duration=timedelta(hours=2.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_013"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "D", "priority": 4},
-        ),
-        Operation(
-            operation_id="T022",
-            job_id="VEHICLE_014",
-            duration=timedelta(hours=0.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_014"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "E", "priority": 2},
-        ),
-        Operation(
-            operation_id="T023",
-            job_id="VEHICLE_015",
-            duration=timedelta(hours=1.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_015"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 1},
-        ),
-        Operation(
-            operation_id="T024",
-            job_id="VEHICLE_016",
-            duration=timedelta(hours=2.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_016"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "B", "priority": 3},
-        ),
-        Operation(
-            operation_id="T025",
-            job_id="VEHICLE_017",
-            duration=timedelta(hours=1.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_017"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 2},
-        ),
-        Operation(
-            operation_id="T026",
-            job_id="VEHICLE_018",
-            duration=timedelta(hours=1.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_018"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "D", "priority": 4},
-        ),
-        Operation(
-            operation_id="T027",
-            job_id="VEHICLE_019",
-            duration=timedelta(hours=2.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_019"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "E", "priority": 2},
-        ),
-        Operation(
-            operation_id="T028",
-            job_id="VEHICLE_020",
-            duration=timedelta(hours=1.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_020"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "A", "priority": 2},
-        ),
-        Operation(
-            operation_id="T029",
-            job_id="VEHICLE_021",
-            duration=timedelta(hours=2.0).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_021"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "B", "priority": 3},
-        ),
-        Operation(
-            operation_id="T030",
-            job_id="VEHICLE_022",
-            duration=timedelta(hours=1.75).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_4"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_022"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "C", "priority": 1},
-        ),
-        Operation(
-            operation_id="T031",
-            job_id="VEHICLE_023",
-            duration=timedelta(hours=1.5).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_023"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "D", "priority": 4},
-        ),
-        Operation(
-            operation_id="T032",
-            job_id="VEHICLE_024",
-            duration=timedelta(hours=2.25).total_seconds(),
-            resource_requirements=[
-                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
-                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_024"]},
-            ],
-            precedence=[],
-            metadata={"test_type": "E", "priority": 2},
-        ),
-    ]
+    Score components:
+    - base importance from existing 1-5 priority
+    - scarcity bonus for tests with fewer site options
+    - unlock bonus for tests that unblock many descendants
+    - short test bonus (value density) to improve test count throughput
+    """
+    op_by_id = {op.operation_id: op for op in tests}
+    children_by_op = defaultdict(list)
+    site_demand_map = compute_priority_ranks_site_demand(tests)
 
     for op in tests:
-        op.metadata["label"] = op.operation_id
+        for pred_id in op.precedence:
+            if pred_id in op_by_id:
+                children_by_op[pred_id].append(op.operation_id)
 
-    site_demand_map = compute_priority_ranks_site_demand_with_precedence(tests)
+    descendants_cache = {}
 
-    # Jobs are vehicles (each vehicle has one or more tests)
-    schedule.add_job(Job("VEHICLE_001", [tests[0], tests[1], tests[4], tests[15]], metadata={"vehicle": "V001"}))
-    schedule.add_job(Job("VEHICLE_002", [tests[2], tests[5], tests[6]], metadata={"vehicle": "V002"}))
-    schedule.add_job(Job("VEHICLE_003", [tests[3], tests[7], tests[8], tests[16]], metadata={"vehicle": "V003"}))
-    schedule.add_job(Job("VEHICLE_004", [tests[9]], metadata={"vehicle": "V004"}))
-    schedule.add_job(Job("VEHICLE_005", [tests[10]], metadata={"vehicle": "V005"}))
-    schedule.add_job(Job("VEHICLE_006", [tests[11]], metadata={"vehicle": "V006"}))
-    schedule.add_job(Job("VEHICLE_007", [tests[12]], metadata={"vehicle": "V007"}))
-    schedule.add_job(Job("VEHICLE_008", [tests[13]], metadata={"vehicle": "V008"}))
-    schedule.add_job(Job("VEHICLE_009", [tests[14]], metadata={"vehicle": "V009"}))
-    schedule.add_job(Job("VEHICLE_010", [tests[17]], metadata={"vehicle": "V010"}))
-    schedule.add_job(Job("VEHICLE_011", [tests[18]], metadata={"vehicle": "V011"}))
-    schedule.add_job(Job("VEHICLE_012", [tests[19]], metadata={"vehicle": "V012"}))
-    schedule.add_job(Job("VEHICLE_013", [tests[20]], metadata={"vehicle": "V013"}))
-    schedule.add_job(Job("VEHICLE_014", [tests[21]], metadata={"vehicle": "V014"}))
-    schedule.add_job(Job("VEHICLE_015", [tests[22]], metadata={"vehicle": "V015"}))
-    schedule.add_job(Job("VEHICLE_016", [tests[23]], metadata={"vehicle": "V016"}))
-    schedule.add_job(Job("VEHICLE_017", [tests[24]], metadata={"vehicle": "V017"}))
-    schedule.add_job(Job("VEHICLE_018", [tests[25]], metadata={"vehicle": "V018"}))
-    schedule.add_job(Job("VEHICLE_019", [tests[26]], metadata={"vehicle": "V019"}))
-    schedule.add_job(Job("VEHICLE_020", [tests[27]], metadata={"vehicle": "V020"}))
-    schedule.add_job(Job("VEHICLE_021", [tests[28]], metadata={"vehicle": "V021"}))
-    schedule.add_job(Job("VEHICLE_022", [tests[29]], metadata={"vehicle": "V022"}))
-    schedule.add_job(Job("VEHICLE_023", [tests[30]], metadata={"vehicle": "V023"}))
-    schedule.add_job(Job("VEHICLE_024", [tests[31]], metadata={"vehicle": "V024"}))
+    def count_descendants(op_id):
+        if op_id in descendants_cache:
+            return descendants_cache[op_id]
+        seen = set()
+        stack = list(children_by_op.get(op_id, []))
+        while stack:
+            child_id = stack.pop()
+            if child_id in seen:
+                continue
+            seen.add(child_id)
+            stack.extend(children_by_op.get(child_id, []))
+        descendants_cache[op_id] = len(seen)
+        return descendants_cache[op_id]
 
-    # Shift constraint: strict 6-hour shifts
-    schedule.add_constraint(
-        ShiftConstraint(
-            shift_windows=[(time(6, 0), time(12, 0)), (time(12, 0), time(18, 0))],
-            mode="strict",
-            resource_type_filter=["site", "vehicle"],
+    for op in tests:
+        base_priority = float(op.metadata.get("priority", 5))
+        base_importance = max(1.0, 6.0 - base_priority)
+        site_options = max(1, int(op.metadata.get("site_options", 1)))
+        scarcity_bonus = 1.0 / site_options
+        unlocked_count = count_descendants(op.operation_id)
+        duration_hours = max(op.duration / 3600.0, 0.25)
+        short_test_bonus = 1.0 / duration_hours
+
+        score = (
+            importance_weight * base_importance
+            + scarcity_weight * scarcity_bonus
+            + unlock_weight * unlocked_count
+            + short_test_bonus_weight * short_test_bonus
         )
-    )
 
-    # Changeover at sites when switching vehicles (no changeover when same vehicle)
-    schedule.add_constraint(
-        ChangeoverConstraint(
-            changeover_minutes=10,
-            key_from="assigned_resource",
-            key_field="vehicle",
-            resource_type_filter=["site"],
+        op.metadata["priority_score"] = score
+        op.metadata["importance_throughput_score"] = score
+        op.metadata["unlocked_descendants"] = unlocked_count
+
+    ranked_tests = sorted(
+        tests,
+        key=lambda op: (
+            -op.metadata.get("importance_throughput_score", 0.0),
+            op.metadata.get("priority", 5),
+            op.duration,
+            op.operation_id,
+        ),
+    )
+    for rank, op in enumerate(ranked_tests, start=1):
+        op.metadata["priority_rank"] = rank
+
+    return site_demand_map
+
+
+def compute_priority_ranks_bottleneck_density(
+    tests,
+    bottleneck_weight=1.25,
+    density_weight=1.0,
+    scarcity_weight=0.9,
+    precedence_weight=0.6,
+):
+    """
+    Emphasize bottleneck resources and value density.
+
+    Score components:
+    - bottleneck pressure (avg site demand)
+    - importance per hour (priority-derived density)
+    - scarcity bonus for low-flexibility tests
+    - precedence pressure from direct child importance
+    """
+    site_demand_map = compute_priority_ranks_site_demand(tests)
+    op_by_id = {op.operation_id: op for op in tests}
+    children_by_op = defaultdict(list)
+
+    for op in tests:
+        for pred_id in op.precedence:
+            if pred_id in op_by_id:
+                children_by_op[pred_id].append(op.operation_id)
+
+    for op in tests:
+        base_priority = float(op.metadata.get("priority", 5))
+        base_importance = max(1.0, 6.0 - base_priority)
+        duration_hours = max(op.duration / 3600.0, 0.25)
+        density = base_importance / duration_hours
+
+        site_options = max(1, int(op.metadata.get("site_options", 1)))
+        scarcity_bonus = 1.0 / site_options
+        bottleneck_pressure = float(op.metadata.get("avg_site_importance", 0.0))
+
+        direct_children = children_by_op.get(op.operation_id, [])
+        if direct_children:
+            child_pressures = [
+                max(1.0, 6.0 - float(op_by_id[child_id].metadata.get("priority", 5)))
+                for child_id in direct_children
+            ]
+            precedence_pressure = max(child_pressures)
+        else:
+            precedence_pressure = 0.0
+
+        score = (
+            bottleneck_weight * bottleneck_pressure
+            + density_weight * density
+            + scarcity_weight * scarcity_bonus
+            + precedence_weight * precedence_pressure
         )
+
+        op.metadata["priority_score"] = score
+        op.metadata["bottleneck_density_score"] = score
+        op.metadata["precedence_pressure"] = precedence_pressure
+
+    ranked_tests = sorted(
+        tests,
+        key=lambda op: (
+            -op.metadata.get("bottleneck_density_score", 0.0),
+            op.metadata.get("priority", 5),
+            op.duration,
+            op.operation_id,
+        ),
     )
+    for rank, op in enumerate(ranked_tests, start=1):
+        op.metadata["priority_rank"] = rank
 
-    # Transfer time between sites for the same vehicle
-    schedule.add_constraint(
-        ChangeoverConstraint(
-            changeover_minutes=20,
-            key_from="assigned_resource",
-            key_field="site",
-            resource_type_filter=["vehicle"],
-        )
-    )
+    return site_demand_map
 
-    # Greedy scheduler (priority first)
-    unscheduled = [op for op in schedule.operations.values()]
-    unscheduled_tests = []
-    while True:
-        ready = [
-            op for op in unscheduled
-            if all(schedule.operations[p].is_scheduled() for p in op.precedence)
-        ]
-        if not ready:
-            break
-        ready.sort(key=lambda op: op.metadata.get("priority_rank", 10**9))
 
-        progress = False
-        for op in ready:
+def main():
+    schedule, tests, sites, vehicles, start_date, end_date = build_vehicle_testing_problem()
+
+    ranking_strategies = {
+        "naive": lambda ops: (compute_priority_ranks_naive(ops) or {}),
+        "site_demand": lambda ops: compute_priority_ranks_site_demand(ops),
+        "site_demand_with_precedence": lambda ops: compute_priority_ranks_site_demand_with_precedence(
+            ops, propagation_weight=0.85
+        ),
+        "importance_throughput": lambda ops: compute_priority_ranks_importance_throughput(
+            ops,
+            importance_weight=1.4,
+            scarcity_weight=1.2,
+            unlock_weight=0.45,
+            short_test_bonus_weight=0.55,
+        ),
+        "bottleneck_density": lambda ops: compute_priority_ranks_bottleneck_density(
+            ops,
+            bottleneck_weight=1.25,
+            density_weight=1.0,
+            scarcity_weight=0.9,
+            precedence_weight=0.6,
+        ),
+    }
+    strategies_to_compare = list(ranking_strategies.keys())
+
+    def run_greedy_schedule():
+        unscheduled = [op for op in schedule.operations.values()]
+        unscheduled_tests = []
+        while unscheduled:
+            ready = [
+                op for op in unscheduled
+                if all(schedule.operations[p].is_scheduled() for p in op.precedence)
+            ]
+            if not ready:
+                break
+            ready.sort(key=lambda op: op.metadata.get("priority_rank", 10**9))
+
+            selected = ready[0]
             earliest = start_date.timestamp()
-            if op.precedence:
-                earliest = max(earliest, max(schedule.operations[p].end_time for p in op.precedence))
-            if not op.can_start_at(earliest, schedule.operations):
+            if selected.precedence:
+                earliest = max(
+                    earliest,
+                    max(schedule.operations[p].end_time for p in selected.precedence),
+                )
+            if not selected.can_start_at(earliest, schedule.operations):
+                unscheduled.remove(selected)
+                unscheduled_tests.append(selected)
                 continue
             try:
-                start_ts, assigned = schedule._find_earliest_slot_any_resource(op, earliest)
+                start_ts, assigned = schedule._find_earliest_slot_any_resource(selected, earliest)
             except RuntimeError:
-                unscheduled.remove(op)
-                unscheduled_tests.append(op)
+                unscheduled.remove(selected)
+                unscheduled_tests.append(selected)
                 continue
-            if start_ts + op.duration > end_date.timestamp():
-                continue
-            if schedule.schedule_operation_multi(
-                op.operation_id, assigned, datetime.fromtimestamp(start_ts)
-            ):
-                unscheduled.remove(op)
-                progress = True
-            else:
-                unscheduled.remove(op)
-                unscheduled_tests.append(op)
-        if not progress:
-            break
 
-    for op in list(unscheduled):
-        unscheduled_tests.append(op)
-        unscheduled.remove(op)
+            if start_ts + selected.duration > end_date.timestamp():
+                unscheduled.remove(selected)
+                unscheduled_tests.append(selected)
+                continue
+
+            if schedule.schedule_operation_multi(
+                selected.operation_id, assigned, datetime.fromtimestamp(start_ts)
+            ):
+                unscheduled.remove(selected)
+            else:
+                unscheduled.remove(selected)
+                unscheduled_tests.append(selected)
+
+        for op in list(unscheduled):
+            unscheduled_tests.append(op)
+            unscheduled.remove(op)
+        return unscheduled_tests
+
+    def get_avg_site_utilization():
+        start_ts = start_date.timestamp()
+        end_ts = end_date.timestamp()
+        site_utils = [
+            resource.get_utilization(start_ts, end_ts)
+            for resource in schedule.resources.values()
+            if resource.resource_type == "site"
+        ]
+        return sum(site_utils) / len(site_utils) if site_utils else 0.0
+
+    planning_window_seconds = (end_date - start_date).total_seconds()
+    site_capacity_seconds = len(sites) * planning_window_seconds
+    total_demand_seconds = sum(op.duration for op in tests)
+    # =========================
+    # Schedule scoring settings
+    # =========================
+    # Keep these together so future tuning/range-sweeps are easy.
+    SCORE_CONFIG = {
+        # Strong separation at top priorities.
+        "priority_bucket_weights": {
+            1: 30.0, 
+            2: 15.0, 
+            3: 6.0, 
+            4: 2.0, 
+            5: 1.0
+        },
+        # Duration exponent (<1 favors throughput of shorter tests).
+        "duration_exponent_gamma": 0.6,
+        # Overall objective mix.
+        "priority_coverage_weight": 0.80,
+        "site_utilization_weight": 0.20,
+    }
+
+    def get_priority_weight(op, priority_bucket_weights):
+        priority_bucket = int(op.metadata.get("priority", 5))
+        return priority_bucket_weights.get(priority_bucket, 1.0)
+
+    def get_weighted_test_value_seconds(op, config):
+        hours = max(op.duration / 3600.0, 0.0)
+        priority_weight = get_priority_weight(op, config["priority_bucket_weights"])
+        value_in_hour_units = priority_weight * (hours ** config["duration_exponent_gamma"])
+        # Keep a seconds-like scale for easier intuition in aggregates.
+        return value_in_hour_units * 3600.0
+
+    total_priority_weighted_value = sum(
+        get_weighted_test_value_seconds(op, SCORE_CONFIG) for op in tests
+    )
+    comparison_results = []
+
+    for strategy_name in strategies_to_compare:
+        schedule.clear_all_schedules()
+        site_demand_map = ranking_strategies[strategy_name](tests)
+        unscheduled_tests = run_greedy_schedule()
+        stats = schedule.get_schedule_statistics()
+        scheduled_ops = schedule.get_scheduled_operations()
+        scheduled_seconds = sum(op.duration for op in scheduled_ops.values())
+        scheduled_priority_weighted_value = sum(
+            get_weighted_test_value_seconds(op, SCORE_CONFIG) for op in scheduled_ops.values()
+        )
+        unscheduled_seconds = total_demand_seconds - scheduled_seconds
+        avg_site_utilization = get_avg_site_utilization()
+        demand_coverage_percent = (
+            (scheduled_seconds / total_demand_seconds) * 100 if total_demand_seconds > 0 else 0.0
+        )
+        priority_weighted_coverage_percent = (
+            (scheduled_priority_weighted_value / total_priority_weighted_value) * 100
+            if total_priority_weighted_value > 0
+            else 0.0
+        )
+        site_capacity_used_percent = (
+            (scheduled_seconds / site_capacity_seconds) * 100 if site_capacity_seconds > 0 else 0.0
+        )
+        strategy_score = (
+            SCORE_CONFIG["priority_coverage_weight"] * (priority_weighted_coverage_percent / 100.0)
+            + SCORE_CONFIG["site_utilization_weight"] * (site_capacity_used_percent / 100.0)
+        )
+        comparison_results.append(
+            {
+                "strategy": strategy_name,
+                "scheduled_operations": len(scheduled_ops),
+                "unscheduled_operations": len(unscheduled_tests),
+                "scheduled_seconds": scheduled_seconds,
+                "scheduled_priority_weighted_value": scheduled_priority_weighted_value,
+                "unscheduled_seconds": unscheduled_seconds,
+                "demand_coverage_percent": demand_coverage_percent,
+                "priority_weighted_coverage_percent": priority_weighted_coverage_percent,
+                "site_capacity_used_percent": site_capacity_used_percent,
+                "strategy_score": strategy_score,
+                "makespan_hours": stats["makespan_hours"],
+                "avg_site_utilization": avg_site_utilization,
+                "site_demand_map": site_demand_map,
+            }
+        )
+
+    print("\n=== Strategy Comparison ===")
+    for result in comparison_results:
+        print(
+            f"  {result['strategy']}: "
+            f"{result['scheduled_operations']} scheduled, "
+            f"{result['unscheduled_operations']} unscheduled, "
+            f"unscheduled workload {result['unscheduled_seconds'] / 3600:.2f}h, "
+            f"priority coverage {result['priority_weighted_coverage_percent']:.1f}%, "
+            f"makespan {result['makespan_hours']:.2f}h, "
+            f"site capacity used {result['site_capacity_used_percent'] / 100:.1%}, "
+            f"site utilization {result['avg_site_utilization']:.1%}, "
+            f"weighted score {result['strategy_score']:.4f}"
+        )
+
+    best_result = max(
+        comparison_results,
+        key=lambda r: r["strategy_score"],
+    )
+    best_strategy = best_result["strategy"]
+
+    # Re-run the winner so gantt charts and detail metrics reflect the best schedule.
+    schedule.clear_all_schedules()
+    site_demand_map = ranking_strategies[best_strategy](tests)
+    unscheduled_tests = run_greedy_schedule()
 
     stats = schedule.get_schedule_statistics()
-    total_demand_seconds = sum(op.duration for op in tests)
     scheduled_seconds = sum(op.duration for op in schedule.get_scheduled_operations().values())
+    scheduled_priority_weighted_value = sum(
+        get_weighted_test_value_seconds(op, SCORE_CONFIG)
+        for op in schedule.get_scheduled_operations().values()
+    )
     unscheduled_seconds = total_demand_seconds - scheduled_seconds
-    schedule_quality_score = (
+    demand_coverage_percent = (
         (scheduled_seconds / total_demand_seconds) * 100 if total_demand_seconds > 0 else 0.0
     )
+    priority_weighted_coverage_percent = (
+        (scheduled_priority_weighted_value / total_priority_weighted_value) * 100
+        if total_priority_weighted_value > 0
+        else 0.0
+    )
+    site_capacity_used_percent = (
+        (scheduled_seconds / site_capacity_seconds) * 100 if site_capacity_seconds > 0 else 0.0
+    )
+    avg_site_utilization = get_avg_site_utilization()
+    selected_strategy_score = (
+        SCORE_CONFIG["priority_coverage_weight"] * (priority_weighted_coverage_percent / 100.0)
+        + SCORE_CONFIG["site_utilization_weight"] * (site_capacity_used_percent / 100.0)
+    )
 
-    print("Scheduled operations:", len(schedule.get_scheduled_operations()))
+    print("\n=== Selected Best Strategy ===")
+    print(f"  {best_strategy}")
+    print(f"  Scheduled operations: {len(schedule.get_scheduled_operations())}")
     print("\nSchedule quality metrics:")
-    print(f"  Scheduled workload: {scheduled_seconds / 3600:.2f}h / {total_demand_seconds / 3600:.2f}h")
+    print(f"  Priority strategy: {best_strategy}")
+    print(
+        f"  Weighted strategy score: {selected_strategy_score:.4f} "
+        f"(priority coverage {SCORE_CONFIG['priority_coverage_weight']:.0%} + "
+        f"site time {SCORE_CONFIG['site_utilization_weight']:.0%})"
+    )
+    print(
+        f"  Scoring params: gamma={SCORE_CONFIG['duration_exponent_gamma']}, "
+        f"bucket_weights={SCORE_CONFIG['priority_bucket_weights']}"
+    )
+    print(f"  Scheduled workload (site-hours): {scheduled_seconds / 3600:.2f}h")
+    print(f"  Site capacity window: {site_capacity_seconds / 3600:.2f}h ({len(sites)} sites x {(planning_window_seconds / 3600):.0f}h)")
+    print(f"  Site capacity used: {site_capacity_used_percent:.1f}%")
+    print(f"  Priority-weighted coverage: {priority_weighted_coverage_percent:.1f}%")
+    print(f"  Demand covered: {scheduled_seconds / 3600:.2f}h / {total_demand_seconds / 3600:.2f}h ({demand_coverage_percent:.1f}%)")
     print(f"  Unscheduled workload time: {unscheduled_seconds / 3600:.2f}h")
-    print(f"  Workload coverage score: {schedule_quality_score:.1f}%")
     print(f"  Makespan: {stats['makespan_hours']:.2f}h")
-    print(f"  Avg resource utilization: {stats['avg_resource_utilization']:.1%}")
+    print(f"  Avg utilization (sites only): {avg_site_utilization:.1%}")
     print("\nAvg site importance demand:")
     for site_id in sorted(site_demand_map):
         print(f"  {site_id}: {site_demand_map[site_id]:.2f}")
