@@ -39,7 +39,8 @@ class ShiftConstraint(Constraint):
     def _get_shift_windows_for_day(self, dt: datetime) -> list:
         """
         Return all shift windows for the day containing dt.
-        Handles overnight shifts (end <= start).
+        Handles overnight shifts (end <= start), including windows that
+        started on the previous day and carry into this day.
         """
         day = dt.date()
         windows = []
@@ -49,6 +50,13 @@ class ShiftConstraint(Constraint):
             if end_dt <= start_dt:
                 end_dt += timedelta(days=1)
             windows.append((start_dt, end_dt))
+
+            # Also include previous-day anchor for overnight windows so times
+            # after midnight are recognized as being within the active shift.
+            if end_t <= start_t:
+                prev_start_dt = start_dt - timedelta(days=1)
+                prev_end_dt = end_dt - timedelta(days=1)
+                windows.append((prev_start_dt, prev_end_dt))
         return windows
 
     def _is_in_shift(self, dt: datetime) -> bool:

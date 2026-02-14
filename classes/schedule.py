@@ -5,7 +5,7 @@ The Schedule is the central orchestrator that manages jobs, operations, and reso
 and provides methods for scheduling operations and visualizing the results.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import Dict, Optional, List, TYPE_CHECKING
 import itertools
 if TYPE_CHECKING:
@@ -1206,6 +1206,57 @@ class Schedule:
         
         # Create y-position mapping
         y_positions = {resource_id: i for i, resource_id in enumerate(resource_ids_sorted)}
+
+        # Build visual blocks for enforced changeover/transfer time so unavailable
+        # windows are visible instead of looking like free whitespace.
+        constraint_blocks = []
+        try:
+            from classes.constraints import ChangeoverConstraint
+            changeover_constraints = [
+                c for c in self.constraints if isinstance(c, ChangeoverConstraint)
+            ]
+        except Exception:
+            changeover_constraints = []
+
+        for resource in resources:
+            scheduled_ops = sorted(resource.schedule, key=lambda op: op.start_time)
+            if len(scheduled_ops) < 2:
+                continue
+            for prev_op, next_op in zip(scheduled_ops, scheduled_ops[1:]):
+                required_gap_seconds = 0.0
+                for constraint in changeover_constraints:
+                    if constraint.resource_type_filter and resource.resource_type not in constraint.resource_type_filter:
+                        continue
+                    if constraint.changeover_seconds <= 0:
+                        continue
+                    if constraint._requires_changeover(self, prev_op, next_op):
+                        required_gap_seconds = max(required_gap_seconds, constraint.changeover_seconds)
+
+                if required_gap_seconds <= 0:
+                    continue
+
+                block_start_ts = prev_op.end_time
+                block_end_ts = min(next_op.start_time, prev_op.end_time + required_gap_seconds)
+                if block_end_ts <= block_start_ts:
+                    continue
+                constraint_blocks.append((resource.resource_id, block_start_ts, block_end_ts))
+
+        # Plot enforced constraint windows first so operation bars remain prominent.
+        for resource_id, block_start_ts, block_end_ts in constraint_blocks:
+            y_pos = y_positions[resource_id]
+            start_dt = datetime.fromtimestamp(block_start_ts)
+            duration_days = (block_end_ts - block_start_ts) / (24 * 3600)
+            block_rect = Rectangle(
+                (mdates.date2num(start_dt), y_pos - 0.4),
+                duration_days,
+                0.8,
+                facecolor="#B0B0B0",
+                edgecolor="#808080",
+                alpha=0.6,
+                hatch="////",
+                linewidth=0.8,
+            )
+            ax.add_patch(block_rect)
         
         # Plot operations as colored rectangles
         for operation, resource_id in all_operations:
@@ -1263,14 +1314,13 @@ class Schedule:
         if all_operations:
             earliest_start = min(op.start_time for op, _ in all_operations)
             latest_end = max(op.end_time for op, _ in all_operations)
-            start_dt = datetime.fromtimestamp(earliest_start)
-            end_dt = datetime.fromtimestamp(latest_end)
-            
-            # Add some padding
-            padding = timedelta(minutes=30)
+            # Show the full configured schedule window (not just busy segments)
+            # so users can see true free space across the day.
+            start_dt = min(datetime.fromtimestamp(earliest_start), self.start_date)
+            end_dt = max(datetime.fromtimestamp(latest_end), self.end_date)
             ax.set_xlim(
-                mdates.date2num(start_dt - padding),
-                mdates.date2num(end_dt + padding)
+                mdates.date2num(start_dt),
+                mdates.date2num(end_dt)
             )
         
         # Customize the plot
@@ -1281,6 +1331,39 @@ class Schedule:
         if title_suffix:
             title = f"{title} ({title_suffix})"
         ax.set_title(title, fontsize=14, fontweight='bold')
+
+        # Draw shift-boundary guide lines from configured ShiftConstraint windows.
+        try:
+            from classes.constraints import ShiftConstraint
+
+            shift_constraints = [c for c in self.constraints if isinstance(c, ShiftConstraint)]
+            if shift_constraints:
+                # Use first shift constraint (this project uses one global shift definition).
+                shift_constraint = shift_constraints[0]
+                boundary_times = set()
+                day_cursor = self.start_date.date()
+                end_day = self.end_date.date()
+
+                while day_cursor <= end_day:
+                    day_dt = datetime.combine(day_cursor, time(0, 0))
+                    for start_t, end_t in shift_constraint.shift_windows:
+                        boundary_times.add(datetime.combine(day_cursor, start_t))
+                        boundary_times.add(datetime.combine(day_cursor, end_t))
+                    day_cursor += timedelta(days=1)
+
+                # Keep only boundaries within displayed window.
+                for boundary_dt in sorted(boundary_times):
+                    if self.start_date <= boundary_dt <= self.end_date:
+                        ax.axvline(
+                            mdates.date2num(boundary_dt),
+                            color="#222222",
+                            linestyle="-",
+                            linewidth=1.6,
+                            alpha=0.85,
+                            zorder=0,
+                        )
+        except Exception:
+            pass
         
         # Rotate x-axis labels for better readability
         plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
@@ -1291,6 +1374,19 @@ class Schedule:
             legend_elements.append(
                 Rectangle((0, 0), 1, 1, facecolor=job_type_colors[job_type], alpha=0.7,
                          label=f'{job_type}')
+            )
+        if constraint_blocks:
+            legend_elements.append(
+                Rectangle(
+                    (0, 0),
+                    1,
+                    1,
+                    facecolor="#B0B0B0",
+                    edgecolor="#808080",
+                    alpha=0.6,
+                    hatch="////",
+                    label="Constraint time",
+                )
             )
         
         ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))

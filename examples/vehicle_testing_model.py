@@ -18,6 +18,7 @@ from classes.job import Job
 from classes.resource import Resource
 from classes.schedule import Schedule
 from classes.constraints import ChangeoverConstraint, ShiftConstraint, SoakConstraint
+from constraint_config import SCHEDULE_CONFIG, CONSTRAINT_CONFIG
 
 
 def build_vehicle_testing_problem():
@@ -25,54 +26,32 @@ def build_vehicle_testing_problem():
     Build the vehicle emissions testing scheduling problem.
     Returns: schedule, tests, sites, vehicles, start_date, end_date
     """
-    start_date = datetime(2026, 3, 3, 6, 0)
-    end_date = datetime(2026, 3, 3, 18, 0)
+    start_cfg = SCHEDULE_CONFIG["start_date"]
+    end_cfg = SCHEDULE_CONFIG["end_date"]
+    start_date = datetime(
+        start_cfg["year"], start_cfg["month"], start_cfg["day"], start_cfg["hour"], start_cfg["minute"]
+    )
+    end_date = datetime(
+        end_cfg["year"], end_cfg["month"], end_cfg["day"], end_cfg["hour"], end_cfg["minute"]
+    )
 
     schedule = Schedule(
-        name="Vehicle Emissions Testing - Day 1",
-        schedule_id="VEH_TEST_DAY_1",
+        name=SCHEDULE_CONFIG["name"],
+        schedule_id=SCHEDULE_CONFIG["schedule_id"],
         start_date=start_date,
         end_date=end_date,
     )
 
     # Resources: sites/garages with different equipment
-    sites = [
-        Resource("Site_1", "site", "Site 1"),
-        Resource("Site_2", "site", "Site 2"),
-        Resource("Site_3", "site", "Site 3"),
-        Resource("Site_4", "site", "Site 4"),
-        Resource("Site_5", "site", "Site 5"),
-    ]
-    vehicles = [
-        Resource("VEHICLE_001", "vehicle", "Vehicle 001"),
-        Resource("VEHICLE_002", "vehicle", "Vehicle 002"),
-        Resource("VEHICLE_003", "vehicle", "Vehicle 003"),
-        Resource("VEHICLE_004", "vehicle", "Vehicle 004"),
-        Resource("VEHICLE_005", "vehicle", "Vehicle 005"),
-        Resource("VEHICLE_006", "vehicle", "Vehicle 006"),
-        Resource("VEHICLE_007", "vehicle", "Vehicle 007"),
-        Resource("VEHICLE_008", "vehicle", "Vehicle 008"),
-        Resource("VEHICLE_009", "vehicle", "Vehicle 009"),
-        Resource("VEHICLE_010", "vehicle", "Vehicle 010"),
-        Resource("VEHICLE_011", "vehicle", "Vehicle 011"),
-        Resource("VEHICLE_012", "vehicle", "Vehicle 012"),
-        Resource("VEHICLE_013", "vehicle", "Vehicle 013"),
-        Resource("VEHICLE_014", "vehicle", "Vehicle 014"),
-        Resource("VEHICLE_015", "vehicle", "Vehicle 015"),
-        Resource("VEHICLE_016", "vehicle", "Vehicle 016"),
-        Resource("VEHICLE_017", "vehicle", "Vehicle 017"),
-        Resource("VEHICLE_018", "vehicle", "Vehicle 018"),
-        Resource("VEHICLE_019", "vehicle", "Vehicle 019"),
-        Resource("VEHICLE_020", "vehicle", "Vehicle 020"),
-        Resource("VEHICLE_021", "vehicle", "Vehicle 021"),
-        Resource("VEHICLE_022", "vehicle", "Vehicle 022"),
-        Resource("VEHICLE_023", "vehicle", "Vehicle 023"),
-        Resource("VEHICLE_024", "vehicle", "Vehicle 024"),
-    ]
+    sites = [Resource(f"Site_{i}", "site", f"Site {i}") for i in range(1, 11)]
+    vehicles = [Resource(f"VEHICLE_{i:03d}", "vehicle", f"Vehicle {i:03d}") for i in range(1, 51)]
+
     for site in sites:
-        schedule.add_resource(site)
+        schedule.add_resource(site);
+
     for vehicle in vehicles:
-        schedule.add_resource(vehicle)
+        schedule.add_resource(vehicle);
+
 
     # Example tests for vehicles (each test is an operation)
     tests = [
@@ -134,7 +113,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T006",
             job_id="VEHICLE_002",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_002"]},
@@ -189,7 +168,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T011",
             job_id="VEHICLE_005",
-            duration=timedelta(hours=0.75).total_seconds(),
+            duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_005"]},
@@ -222,7 +201,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T014",
             job_id="VEHICLE_008",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_008"]},
@@ -244,7 +223,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T016",
             job_id="VEHICLE_001",
-            duration=timedelta(hours=0.5).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_001"]},
@@ -310,7 +289,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T022",
             job_id="VEHICLE_014",
-            duration=timedelta(hours=0.75).total_seconds(),
+            duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_014"]},
@@ -321,7 +300,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T023",
             job_id="VEHICLE_015",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_015"]},
@@ -338,7 +317,7 @@ def build_vehicle_testing_problem():
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_016"]},
             ],
             precedence=[],
-            metadata={"test_type": "B", "priority": 3},
+            metadata={"test_type": "B", "priority": 3, "soak_hours": 4},
         ),
         Operation(
             operation_id="T025",
@@ -354,7 +333,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T026",
             job_id="VEHICLE_018",
-            duration=timedelta(hours=1.0).total_seconds(),
+            duration=timedelta(hours=2.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_018"]},
@@ -376,7 +355,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T028",
             job_id="VEHICLE_020",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_020"]},
@@ -437,7 +416,7 @@ def build_vehicle_testing_problem():
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_004"]},
             ],
             precedence=["T010"],
-            metadata={"test_type": "B", "priority": 2},
+            metadata={"test_type": "B", "priority": 2, "soak_hours": 2},
         ),
         Operation(
             operation_id="T034",
@@ -475,13 +454,13 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T037",
             job_id="VEHICLE_008",
-            duration=timedelta(hours=0.75).total_seconds(),
+            duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_008"]},
             ],
             precedence=["T014"],
-            metadata={"test_type": "A", "priority": 2},
+            metadata={"test_type": "A", "priority": 2, "soak_hours": 4},
         ),
         Operation(
             operation_id="T038",
@@ -497,7 +476,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T039",
             job_id="VEHICLE_010",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_010"]},
@@ -519,7 +498,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T041",
             job_id="VEHICLE_012",
-            duration=timedelta(hours=0.75).total_seconds(),
+            duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_012"]},
@@ -574,7 +553,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T046",
             job_id="VEHICLE_017",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_017"]},
@@ -585,7 +564,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T047",
             job_id="VEHICLE_018",
-            duration=timedelta(hours=0.75).total_seconds(),
+            duration=timedelta(hours=1.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_018"]},
@@ -618,7 +597,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T050",
             job_id="VEHICLE_021",
-            duration=timedelta(hours=2.0).total_seconds(),
+            duration=timedelta(hours=3.0).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_021"]},
@@ -629,7 +608,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T051",
             job_id="VEHICLE_022",
-            duration=timedelta(hours=1.25).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_4"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_022"]},
@@ -640,7 +619,7 @@ def build_vehicle_testing_problem():
         Operation(
             operation_id="T052",
             job_id="VEHICLE_024",
-            duration=timedelta(hours=1.0).total_seconds(),
+            duration=timedelta(hours=1.5).total_seconds(),
             resource_requirements=[
                 {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
                 {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_024"]},
@@ -650,15 +629,791 @@ def build_vehicle_testing_problem():
         ),
     ]
 
+    # Explicit tests T053–T102 (static entries, same values as previous generation logic)
+    tests.extend([
+        Operation(
+            operation_id="T053",
+            job_id="VEHICLE_025",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4", "Site_7"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_025"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T054",
+            job_id="VEHICLE_025",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_025"]},
+            ],
+            precedence=["T053"],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T055",
+            job_id="VEHICLE_025",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_025"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2, "soak_hours": 2},
+        ),
+        Operation(
+            operation_id="T056",
+            job_id="VEHICLE_025",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_025"]},
+            ],
+            precedence=["T055"],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T057",
+            job_id="VEHICLE_026",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_026"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T058",
+            job_id="VEHICLE_026",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_026"]},
+            ],
+            precedence=["T057"],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T059",
+            job_id="VEHICLE_026",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_026"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T060",
+            job_id="VEHICLE_026",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_026"]},
+            ],
+            precedence=["T059"],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T061",
+            job_id="VEHICLE_027",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_027"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T062",
+            job_id="VEHICLE_027",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_027"]},
+            ],
+            precedence=["T061"],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T063",
+            job_id="VEHICLE_027",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_027"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T064",
+            job_id="VEHICLE_028",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_028"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T065",
+            job_id="VEHICLE_028",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_028"]},
+            ],
+            precedence=["T064"],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T066",
+            job_id="VEHICLE_028",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_028"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T067",
+            job_id="VEHICLE_029",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_029"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T068",
+            job_id="VEHICLE_029",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_029"]},
+            ],
+            precedence=["T067"],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T069",
+            job_id="VEHICLE_029",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_7", "Site_10", "Site_3"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_029"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2, "soak_hours": 2},
+        ),
+        Operation(
+            operation_id="T070",
+            job_id="VEHICLE_030",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_030"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T071",
+            job_id="VEHICLE_030",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_7", "Site_10", "Site_3"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_030"]},
+            ],
+            precedence=["T070"],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T072",
+            job_id="VEHICLE_030",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_8", "Site_1"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_030"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T073",
+            job_id="VEHICLE_031",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_7", "Site_10", "Site_3"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_031"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T074",
+            job_id="VEHICLE_031",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_8", "Site_1"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_031"]},
+            ],
+            precedence=["T073"],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T075",
+            job_id="VEHICLE_031",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_031"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T076",
+            job_id="VEHICLE_032",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_8", "Site_1"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_032"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T077",
+            job_id="VEHICLE_032",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_032"]},
+            ],
+            precedence=["T076"],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T078",
+            job_id="VEHICLE_032",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_10", "Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_032"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T079",
+            job_id="VEHICLE_033",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_033"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T080",
+            job_id="VEHICLE_033",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_10", "Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_033"]},
+            ],
+            precedence=["T079"],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T081",
+            job_id="VEHICLE_033",
+            duration=timedelta(hours=1.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_033"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1, "soak_hours": 2},
+        ),
+        Operation(
+            operation_id="T082",
+            job_id="VEHICLE_034",
+            duration=timedelta(hours=1).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_10", "Site_3", "Site_6"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_034"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T083",
+            job_id="VEHICLE_034",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_034"]},
+            ],
+            precedence=["T082"],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T084",
+            job_id="VEHICLE_034",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_034"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T085",
+            job_id="VEHICLE_035",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_4"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_035"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T086",
+            job_id="VEHICLE_035",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_035"]},
+            ],
+            precedence=["T085"],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T087",
+            job_id="VEHICLE_035",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_035"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T088",
+            job_id="VEHICLE_036",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_5"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_036"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T089",
+            job_id="VEHICLE_036",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_036"]},
+            ],
+            precedence=["T088"],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T090",
+            job_id="VEHICLE_036",
+            duration=timedelta(hours=2.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_036"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T091",
+            job_id="VEHICLE_037",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_3", "Site_6", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_037"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T092",
+            job_id="VEHICLE_037",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_037"]},
+            ],
+            precedence=["T091"],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T093",
+            job_id="VEHICLE_037",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_037"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4, "soak_hours": 2},
+        ),
+        Operation(
+            operation_id="T094",
+            job_id="VEHICLE_038",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_4", "Site_7"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_038"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T095",
+            job_id="VEHICLE_038",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_038"]},
+            ],
+            precedence=["T094"],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T096",
+            job_id="VEHICLE_038",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_038"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T097",
+            job_id="VEHICLE_039",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_5", "Site_8"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_039"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T098",
+            job_id="VEHICLE_039",
+            duration=timedelta(hours=2.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_039"]},
+            ],
+            precedence=["T097"],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T099",
+            job_id="VEHICLE_039",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_039"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T100",
+            job_id="VEHICLE_040",
+            duration=timedelta(hours=0.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_6", "Site_9", "Site_2"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_040"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 1},
+        ),
+        Operation(
+            operation_id="T101",
+            job_id="VEHICLE_040",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_7", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_040"]},
+            ],
+            precedence=["T100"],
+            metadata={"test_type": "B", "priority": 2},
+        ),
+        Operation(
+            operation_id="T102",
+            job_id="VEHICLE_040",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_8", "Site_1"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_040"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 2},
+        ),
+        Operation(
+            operation_id="T103",
+            job_id="VEHICLE_041",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_4", "Site_6", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_041"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T104",
+            job_id="VEHICLE_041",
+            duration=timedelta(hours=1.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_5", "Site_7", "Site_8", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_041"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T105",
+            job_id="VEHICLE_042",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3", "Site_4", "Site_5", "Site_6", "Site_8", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_042"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 5},
+        ),
+        Operation(
+            operation_id="T106",
+            job_id="VEHICLE_042",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_5", "Site_6", "Site_7", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_042"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 3},
+        ),
+        Operation(
+            operation_id="T107",
+            job_id="VEHICLE_043",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_4", "Site_5", "Site_7", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_043"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 4},
+        ),
+        Operation(
+            operation_id="T108",
+            job_id="VEHICLE_043",
+            duration=timedelta(hours=1.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_4", "Site_6", "Site_7", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_043"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 5},
+        ),
+        Operation(
+            operation_id="T109",
+            job_id="VEHICLE_044",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_5", "Site_6", "Site_8", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_044"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 3},
+        ),
+        Operation(
+            operation_id="T110",
+            job_id="VEHICLE_044",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3", "Site_4", "Site_5", "Site_7", "Site_8", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_044"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 4},
+        ),
+        Operation(
+            operation_id="T111",
+            job_id="VEHICLE_045",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_5", "Site_6", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_045"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 5},
+        ),
+        Operation(
+            operation_id="T112",
+            job_id="VEHICLE_045",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_6", "Site_7", "Site_8", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_045"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 3},
+        ),
+        Operation(
+            operation_id="T113",
+            job_id="VEHICLE_046",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_4", "Site_5", "Site_6", "Site_7", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_046"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 4},
+        ),
+        Operation(
+            operation_id="T114",
+            job_id="VEHICLE_046",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3", "Site_4", "Site_5", "Site_6", "Site_8", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_046"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 5},
+        ),
+        Operation(
+            operation_id="T115",
+            job_id="VEHICLE_047",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_5", "Site_7", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_047"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 3},
+        ),
+        Operation(
+            operation_id="T116",
+            job_id="VEHICLE_047",
+            duration=timedelta(hours=1.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_4", "Site_6", "Site_7", "Site_8", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_047"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 4},
+        ),
+        Operation(
+            operation_id="T117",
+            job_id="VEHICLE_048",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_4", "Site_5", "Site_6", "Site_8", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_048"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 5},
+        ),
+        Operation(
+            operation_id="T118",
+            job_id="VEHICLE_048",
+            duration=timedelta(hours=2.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_5", "Site_6", "Site_7", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_048"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "D", "priority": 3},
+        ),
+        Operation(
+            operation_id="T119",
+            job_id="VEHICLE_049",
+            duration=timedelta(hours=1.25).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_3", "Site_4", "Site_5", "Site_6", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_049"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "E", "priority": 4},
+        ),
+        Operation(
+            operation_id="T120",
+            job_id="VEHICLE_049",
+            duration=timedelta(hours=1.5).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_4", "Site_6", "Site_7", "Site_8", "Site_9"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_049"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "A", "priority": 5},
+        ),
+        Operation(
+            operation_id="T121",
+            job_id="VEHICLE_050",
+            duration=timedelta(hours=1.0).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_2", "Site_3", "Site_4", "Site_5", "Site_7", "Site_8", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_050"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "B", "priority": 3},
+        ),
+        Operation(
+            operation_id="T122",
+            job_id="VEHICLE_050",
+            duration=timedelta(hours=1.75).total_seconds(),
+            resource_requirements=[
+                {"resource_type": "site", "possible_resource_ids": ["Site_1", "Site_2", "Site_3", "Site_4", "Site_6", "Site_7", "Site_9", "Site_10"]},
+                {"resource_type": "vehicle", "possible_resource_ids": ["VEHICLE_050"]},
+            ],
+            precedence=[],
+            metadata={"test_type": "C", "priority": 4},
+        ),
+    ])
+
     for op in tests:
         op.metadata["label"] = op.operation_id
 
     # Jobs are vehicles; group operations by job_id so test additions stay maintenance-free.
     tests_by_job_id = defaultdict(list)
     for op in tests:
-        tests_by_job_id[op.job_id].append(op)
+        tests_by_job_id[op.job_id].append(op) 
+
     for job_ops in tests_by_job_id.values():
         job_ops.sort(key=lambda op: int(op.operation_id.replace("T", "")))
+
     for vehicle in vehicles:
         job_id = vehicle.resource_id
         if not tests_by_job_id.get(job_id):
@@ -671,19 +1426,22 @@ def build_vehicle_testing_problem():
             )
         )
 
-    # Shift constraint: strict 6-hour shifts
+    shift_windows = {
+        shift_name: (time(start_h, start_m), time(end_h, end_m))
+        for shift_name, ((start_h, start_m), (end_h, end_m)) in CONSTRAINT_CONFIG["shift_windows"].items()
+    }
     schedule.add_constraint(
         ShiftConstraint(
-            shift_windows=[(time(6, 0), time(12, 0)), (time(12, 0), time(18, 0))],
-            mode="strict",
-            resource_type_filter=["site", "vehicle"],
+            shift_windows=list(shift_windows.values()),
+            mode=CONSTRAINT_CONFIG["shift_mode"],
+            resource_type_filter=CONSTRAINT_CONFIG["shift_resource_type_filter"],
         )
     )
 
     # Changeover at sites when switching vehicles (no changeover when same vehicle)
     schedule.add_constraint(
         ChangeoverConstraint(
-            changeover_minutes=10,
+            changeover_minutes=CONSTRAINT_CONFIG["site_changeover_minutes"],
             key_from="assigned_resource",
             key_field="vehicle",
             resource_type_filter=["site"],
@@ -693,7 +1451,7 @@ def build_vehicle_testing_problem():
     # Transfer time between sites for the same vehicle
     schedule.add_constraint(
         ChangeoverConstraint(
-            changeover_minutes=20,
+            changeover_minutes=CONSTRAINT_CONFIG["vehicle_transfer_minutes"],
             key_from="assigned_resource",
             key_field="site",
             resource_type_filter=["vehicle"],
@@ -701,6 +1459,7 @@ def build_vehicle_testing_problem():
     )
 
     # Soak lag for specific tests only (via metadata, e.g. soak_hours).
-    schedule.add_constraint(SoakConstraint())
+    if CONSTRAINT_CONFIG["enable_soak_constraint"]:
+        schedule.add_constraint(SoakConstraint())
 
     return schedule, tests, sites, vehicles, start_date, end_date
