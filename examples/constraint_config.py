@@ -23,3 +23,15 @@ CONSTRAINT_CONFIG = {
     "vehicle_transfer_minutes": 30,
     "enable_soak_constraint": True,
 }
+
+# Generic duration-adjustment configuration (independent of specific domain terms).
+DURATION_ADJUSTMENT_CONFIG = {
+    "base_additional_minutes": 20,  # applies to all assignments
+    "resource_based_rules": {
+        "resource_type": "site",
+        "rules": [
+            # Site numbers >= 6 get extra duration.
+            {"id_number_min": 6, "additional_minutes": 10},
+        ],
+    },
+}

@@ -10,6 +10,7 @@ from typing import Dict, Optional, List, TYPE_CHECKING
 import itertools
 if TYPE_CHECKING:
     from classes.constraints import Constraint
+    from classes.duration_policy import DurationAdjustmentPolicy
 
 # Optional matplotlib imports for visual charts
 try:
@@ -59,7 +60,8 @@ class Schedule:
         name: str, 
         schedule_id: str, 
         start_date: datetime, 
-        end_date: datetime
+        end_date: datetime,
+        duration_adjustment_policy: Optional["DurationAdjustmentPolicy"] = None,
     ):
         """
         Initialize a new Schedule.
@@ -78,6 +80,44 @@ class Schedule:
         self.resources: Dict[str, "Resource"] = {}
         self.operations: Dict[str, "Operation"] = {}
         self.constraints: List["Constraint"] = []
+        self.duration_adjustment_policy = duration_adjustment_policy
+
+    def set_duration_adjustment_policy(
+        self, duration_adjustment_policy: Optional["DurationAdjustmentPolicy"]
+    ):
+        """
+        Set or clear the schedule-level duration adjustment policy.
+        """
+        self.duration_adjustment_policy = duration_adjustment_policy
+
+    def _get_effective_duration(
+        self, operation: "Operation", assigned_resources: Optional[dict] = None
+    ) -> float:
+        """
+        Return effective duration in seconds for an operation and assignment.
+        """
+        resources = assigned_resources if assigned_resources is not None else operation.assigned_resources
+        adjustment_seconds = 0.0
+        if self.duration_adjustment_policy is not None:
+            adjustment_seconds = max(
+                0.0,
+                float(
+                    self.duration_adjustment_policy.get_adjustment_seconds(
+                        self, operation, resources or {}
+                    )
+                ),
+            )
+        effective_duration = float(operation.duration) + adjustment_seconds
+        return max(0.0, effective_duration)
+
+    def get_effective_duration_for_assignment(self, operation_id: str, assigned_resources: dict) -> float:
+        """
+        Public helper to evaluate effective duration for a given assignment.
+        """
+        if operation_id not in self.operations:
+            raise KeyError(f"Operation {operation_id} not found")
+        op = self.operations[operation_id]
+        return self._get_effective_duration(op, assigned_resources)
 
     def __str__(self):
         """Return a string representation of the schedule."""
@@ -170,7 +210,9 @@ class Schedule:
         operation: "Operation",
         assignment_ids: List[str],
         earliest_start: float,
+        effective_duration: Optional[float] = None,
     ) -> float:
+        duration = effective_duration if effective_duration is not None else self._get_effective_duration(operation)
         t = earliest_start
         while True:
             starts = []
@@ -178,7 +220,7 @@ class Schedule:
                 resource = self.resources.get(resource_id)
                 if not resource:
                     raise KeyError(f"Resource {resource_id} not found")
-                start_i = self._find_earliest_slot(resource, operation.duration, t, operation)
+                start_i = self._find_earliest_slot(resource, duration, t, operation)
                 starts.append(start_i)
             t_next = max(starts)
             if t_next == t:
@@ -215,8 +257,11 @@ class Schedule:
             operation.assigned_resources = self._build_assigned_resources(
                 requirements, list(assignment)
             )
+            effective_duration = self._get_effective_duration(
+                operation, operation.assigned_resources
+            )
             start_ts = self._find_earliest_slot_for_assignment(
-                operation, list(assignment), earliest_start
+                operation, list(assignment), earliest_start, effective_duration
             )
             if best_start is None or start_ts < best_start:
                 best_start = start_ts
@@ -306,6 +351,7 @@ class Schedule:
             shifted = False
             elapsed = 0.0
             chosen_assignments = []
+            chosen_durations = []
             for op in operations:
                 start_i = t + elapsed
                 start_i_feasible, assigned_resources = self._find_earliest_slot_any_resource(
@@ -316,9 +362,11 @@ class Schedule:
                     shifted = True
                     break
                 chosen_assignments.append(assigned_resources)
-                elapsed += op.duration
+                effective_duration = self._get_effective_duration(op, assigned_resources)
+                chosen_durations.append(effective_duration)
+                elapsed += effective_duration
             if not shifted:
-                return t, chosen_assignments
+                return t, chosen_assignments, chosen_durations
 
     def schedule_job_template(
         self,
@@ -341,11 +389,13 @@ class Schedule:
         earliest_start = start_time.timestamp()
 
         if blocking:
-            start_ts, chosen_assignments = self._find_earliest_no_wait_start(
+            start_ts, chosen_assignments, chosen_durations = self._find_earliest_no_wait_start(
                 job.operations, earliest_start
             )
             elapsed = 0.0
-            for op, assigned_resources in zip(job.operations, chosen_assignments):
+            for op, assigned_resources, effective_duration in zip(
+                job.operations, chosen_assignments, chosen_durations
+            ):
                 op_start = start_ts + elapsed
                 scheduled = self.schedule_operation_multi(
                     op.operation_id,
@@ -354,7 +404,7 @@ class Schedule:
                 )
                 if not scheduled:
                     raise RuntimeError(f"Failed to schedule {op.operation_id} at {op_start}")
-                elapsed += op.duration
+                elapsed += effective_duration
             return job
 
         for op in job.operations:
@@ -450,7 +500,8 @@ class Schedule:
 
         # Convert datetime to timestamp for internal calculations
         start_timestamp = start_time.timestamp()
-        end_timestamp = start_timestamp + op.duration
+        assigned_resources = {req_type: resource_id} if req_type else {}
+        end_timestamp = start_timestamp + self._get_effective_duration(op, assigned_resources)
 
         # Check resource availability
         if not resource.is_available(start_timestamp, end_timestamp):
@@ -472,7 +523,7 @@ class Schedule:
         op.start_time = start_timestamp
         op.end_time = end_timestamp
         if req_type:
-            op.assigned_resources = {req_type: resource_id}
+            op.assigned_resources = assigned_resources
 
         # Add operation to the resource's schedule
         success = resource.add_operation(op)
@@ -535,11 +586,12 @@ class Schedule:
 
         # Convert datetime to timestamp for internal calculations
         start_timestamp = start_time.timestamp()
-        end_timestamp = start_timestamp + op.duration
+        proposed_assigned_resources = self._build_assigned_resources(requirements, assignment_ids)
+        end_timestamp = start_timestamp + self._get_effective_duration(op, proposed_assigned_resources)
 
         # Check resource availability and constraints
         original_assigned = dict(op.assigned_resources)
-        op.assigned_resources = assigned_resources
+        op.assigned_resources = proposed_assigned_resources
         for resource in resources:
             if not resource.is_available(start_timestamp, end_timestamp):
                 op.assigned_resources = original_assigned
@@ -558,7 +610,7 @@ class Schedule:
         op.resource_id = assignment_ids[0]
         op.start_time = start_timestamp
         op.end_time = end_timestamp
-        op.assigned_resources = self._build_assigned_resources(requirements, assignment_ids)
+        op.assigned_resources = proposed_assigned_resources
 
         # Add operation to each resource schedule
         for resource in resources:
@@ -726,10 +778,11 @@ class Schedule:
                 "Use find_available_resource_sets instead."
             )
         start_ts = start_time.timestamp()
-        end_ts = start_ts + op.duration
         
         available = []
         for resource_id in requirements[0]["possible_resource_ids"]:
+            assigned_resources = {requirements[0]["resource_type"]: resource_id}
+            end_ts = start_ts + self._get_effective_duration(op, assigned_resources)
             resource = self.resources.get(resource_id)
             if resource and resource.is_available(start_ts, end_ts):
                 if not self._constraints_allow(op, resource, start_ts, end_ts):
@@ -755,11 +808,11 @@ class Schedule:
             raise ValueError(f"Operation {operation_id} has no resource requirements")
 
         start_ts = start_time.timestamp()
-        end_ts = start_ts + op.duration
-
         candidates = [req["possible_resource_ids"] for req in requirements]
         feasible = []
         for assignment in itertools.product(*candidates):
+            assigned_resources = self._build_assigned_resources(requirements, list(assignment))
+            end_ts = start_ts + self._get_effective_duration(op, assigned_resources)
             valid = True
             for req, resource_id in zip(requirements, assignment):
                 resource = self.resources.get(resource_id)
@@ -776,7 +829,7 @@ class Schedule:
                 continue
             if not op.can_start_at(start_ts, self.operations):
                 continue
-            feasible.append(self._build_assigned_resources(requirements, list(assignment)))
+            feasible.append(assigned_resources)
 
         return feasible
 

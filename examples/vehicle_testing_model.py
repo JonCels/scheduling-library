@@ -17,8 +17,9 @@ from classes.operation import Operation
 from classes.job import Job
 from classes.resource import Resource
 from classes.schedule import Schedule
+from classes.duration_policy import CallableDurationAdjustmentPolicy
 from classes.constraints import ChangeoverConstraint, ShiftConstraint, SoakConstraint
-from constraint_config import SCHEDULE_CONFIG, CONSTRAINT_CONFIG
+from constraint_config import SCHEDULE_CONFIG, CONSTRAINT_CONFIG, DURATION_ADJUSTMENT_CONFIG
 
 
 def build_vehicle_testing_problem():
@@ -40,6 +41,36 @@ def build_vehicle_testing_problem():
         schedule_id=SCHEDULE_CONFIG["schedule_id"],
         start_date=start_date,
         end_date=end_date,
+    )
+
+    def _duration_adjustment_seconds(_schedule, _operation, assigned_resources):
+        config = DURATION_ADJUSTMENT_CONFIG
+        base_minutes = float(config.get("base_additional_minutes", 0.0))
+        adjustment_minutes = base_minutes
+
+        resource_rules = config.get("resource_based_rules", {})
+        target_resource_type = resource_rules.get("resource_type")
+        if target_resource_type and assigned_resources:
+            assigned_resource_id = assigned_resources.get(target_resource_type)
+            if isinstance(assigned_resource_id, list):
+                assigned_resource_id = assigned_resource_id[0] if assigned_resource_id else None
+            if assigned_resource_id:
+                number_part = "".join(ch for ch in str(assigned_resource_id) if ch.isdigit())
+                resource_number = int(number_part) if number_part else None
+                if resource_number is not None:
+                    for rule in resource_rules.get("rules", []):
+                        min_number = rule.get("id_number_min")
+                        max_number = rule.get("id_number_max")
+                        if min_number is not None and resource_number < int(min_number):
+                            continue
+                        if max_number is not None and resource_number > int(max_number):
+                            continue
+                        adjustment_minutes += float(rule.get("additional_minutes", 0.0))
+
+        return adjustment_minutes * 60.0
+
+    schedule.set_duration_adjustment_policy(
+        CallableDurationAdjustmentPolicy(_duration_adjustment_seconds)
     )
 
     # Resources: sites/garages with different equipment
