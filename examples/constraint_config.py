@@ -7,6 +7,13 @@ SCHEDULE_CONFIG = {
     "schedule_id": "VEH_TEST_DAY_1",
     "start_date": {"year": 2026, "month": 3, "day": 3, "hour": 0, "minute": 0},
     "end_date": {"year": 2026, "month": 3, "day": 4, "hour": 0, "minute": 0},
+    # Randomized test generation controls:
+    # - Create a larger synthetic pool from hardcoded templates.
+    # - Draw a fresh subset for each run.
+    # - Set random_test_seed for reproducible runs; keep None for new random samples.
+    "random_test_pool_size": 500,
+    "selected_test_count": 120,
+    "random_test_seed": None,
 }
 
 CONSTRAINT_CONFIG = {

@@ -672,24 +672,24 @@ def main():
 
     ranking_strategies = {
         "naive": lambda ops: (compute_priority_ranks_naive(ops) or {}),
-        "site_demand": lambda ops: compute_priority_ranks_site_demand(ops),
-        "site_demand_with_precedence": lambda ops: compute_priority_ranks_site_demand_with_precedence(
-            ops, propagation_weight=0.85
-        ),
-        "importance_throughput": lambda ops: compute_priority_ranks_importance_throughput(
-            ops,
-            importance_weight=1.4,
-            scarcity_weight=1.2,
-            unlock_weight=0.45,
-            short_test_bonus_weight=0.55,
-        ),
-        "bottleneck_density": lambda ops: compute_priority_ranks_bottleneck_density(
-            ops,
-            bottleneck_weight=1.25,
-            density_weight=1.0,
-            scarcity_weight=0.9,
-            precedence_weight=0.6,
-        ),
+        # "site_demand": lambda ops: compute_priority_ranks_site_demand(ops),
+        # "site_demand_with_precedence": lambda ops: compute_priority_ranks_site_demand_with_precedence(
+        #     ops, propagation_weight=0.85
+        # ),
+        # "importance_throughput": lambda ops: compute_priority_ranks_importance_throughput(
+        #     ops,
+        #     importance_weight=1.4,
+        #     scarcity_weight=1.2,
+        #     unlock_weight=0.45,
+        #     short_test_bonus_weight=0.55,
+        # ),
+        # "bottleneck_density": lambda ops: compute_priority_ranks_bottleneck_density(
+        #     ops,
+        #     bottleneck_weight=1.25,
+        #     density_weight=1.0,
+        #     scarcity_weight=0.9,
+        #     precedence_weight=0.6,
+        # ),
     }
     strategies_to_compare = list(ranking_strategies.keys())
 
@@ -729,7 +729,7 @@ def main():
     comparison_results = []
     scheduler_modes = {
         "priority_greedy": {"base_mode": "priority", "repair": False},
-        "enhanced_dispatch_repair": {"base_mode": "enhanced_dispatch", "repair": True},
+        # "enhanced_dispatch_repair": {"base_mode": "enhanced_dispatch", "repair": True},
     }
 
     # For each ranking strategy, run the scheduler modes and compare the results.

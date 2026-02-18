@@ -20,6 +20,7 @@ from classes.schedule import Schedule
 from classes.duration_policy import CallableDurationAdjustmentPolicy
 from classes.constraints import ChangeoverConstraint, ShiftConstraint, SoakConstraint
 from constraint_config import SCHEDULE_CONFIG, CONSTRAINT_CONFIG, DURATION_ADJUSTMENT_CONFIG
+from random_vehicle_tests import generate_sampled_tests
 
 
 def build_vehicle_testing_problem():
@@ -1433,6 +1434,13 @@ def build_vehicle_testing_problem():
             metadata={"test_type": "C", "priority": 4},
         ),
     ])
+
+    tests = generate_sampled_tests(
+        base_tests=tests,
+        pool_size=int(SCHEDULE_CONFIG.get("random_test_pool_size", 500)),
+        sample_size=int(SCHEDULE_CONFIG.get("selected_test_count", 120)),
+        seed=SCHEDULE_CONFIG.get("random_test_seed"),
+    )
 
     for op in tests:
         op.metadata["label"] = op.operation_id
