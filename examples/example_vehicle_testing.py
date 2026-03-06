@@ -6,6 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 from copy import deepcopy
 import itertools
+from typing import Callable, Dict, Optional
 import sys
 import os
 
@@ -15,6 +16,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from vehicle_testing_model import build_vehicle_testing_problem
+from imitation_learning.policy import LinearCandidatePolicy
 
 
 def compute_priority_ranks_naive(tests):
@@ -424,17 +426,20 @@ def _score_ready_candidate(
     finish_ts = start_ts + effective_duration
     if finish_ts > end_date.timestamp():
         return None
+    slack_hours = max(0.0, (end_date.timestamp() - finish_ts) / 3600.0)
 
     if mode == "priority":
         return {
             "score": -(operation.metadata.get("priority_rank", 10**9)),
             "start_ts": start_ts,
             "assigned": assigned,
+            "effective_duration": effective_duration,
+            "finish_ts": finish_ts,
+            "slack_hours": slack_hours,
         }
 
     rank = operation.metadata.get("priority_rank", 10**9)
     priority_term = 1.0 / (1.0 + rank)
-    slack_hours = max(0.0, (end_date.timestamp() - finish_ts) / 3600.0)
     slack_urgency_term = 1.0 / (1.0 + slack_hours)
     throughput_term = 1.0 / max(effective_duration / 3600.0, 0.25)
     bottleneck_term = float(operation.metadata.get("avg_site_importance", 0.0)) / 6.0
@@ -452,6 +457,74 @@ def _score_ready_candidate(
         "score": score,
         "start_ts": start_ts,
         "assigned": assigned,
+        "effective_duration": effective_duration,
+        "finish_ts": finish_ts,
+        "slack_hours": slack_hours,
+    }
+
+
+def _site_options_count(operation):
+    for req in operation.get_resource_requirements():
+        if req.get("resource_type") == "site":
+            return len(req.get("possible_resource_ids", [])) or 1
+    return 1
+
+
+def _build_decision_candidate_payload(
+    operation,
+    candidate,
+    end_date,
+    descendant_counts,
+    max_descendants,
+):
+    return {
+        "operation_id": operation.operation_id,
+        "priority_rank": operation.metadata.get("priority_rank", 10**9),
+        "priority": operation.metadata.get("priority", 5),
+        "duration_hours": operation.duration / 3600.0,
+        "effective_duration_hours": candidate["effective_duration"] / 3600.0,
+        "slack_hours": candidate.get(
+            "slack_hours",
+            max(0.0, (end_date.timestamp() - candidate["finish_ts"]) / 3600.0),
+        ),
+        "site_options": operation.metadata.get("site_options", _site_options_count(operation)),
+        "avg_site_importance": float(operation.metadata.get("avg_site_importance", 0.0)),
+        "descendant_ratio": descendant_counts.get(operation.operation_id, 0) / max(max_descendants, 1),
+        "score": candidate["score"],
+        "start_ts": candidate["start_ts"],
+        "finish_ts": candidate["finish_ts"],
+        "assigned_resources": candidate["assigned"],
+    }
+
+
+def _build_policy_prefilter_payload(
+    operation,
+    planning_horizon_hours,
+    descendant_counts,
+    max_descendants,
+):
+    duration_hours = max(operation.duration / 3600.0, 0.25)
+    priority_rank = operation.metadata.get("priority_rank", 10**9)
+    priority_bucket = operation.metadata.get("priority", 5)
+    priority_proxy = 1.0 / (1.0 + float(priority_rank))
+    duration_proxy = 1.0 / duration_hours
+    scarcity_proxy = 1.0 / max(
+        1,
+        int(operation.metadata.get("site_options", _site_options_count(operation))),
+    )
+
+    return {
+        "operation_id": operation.operation_id,
+        "priority_rank": priority_rank,
+        "priority": priority_bucket,
+        "duration_hours": duration_hours,
+        # Pre-feasibility proxy: no slot search performed yet.
+        "effective_duration_hours": duration_hours,
+        "slack_hours": max(0.0, planning_horizon_hours - duration_hours),
+        "site_options": operation.metadata.get("site_options", _site_options_count(operation)),
+        "avg_site_importance": float(operation.metadata.get("avg_site_importance", 0.0)),
+        "descendant_ratio": descendant_counts.get(operation.operation_id, 0) / max(max_descendants, 1),
+        "score": 0.65 * priority_proxy + 0.25 * duration_proxy + 0.10 * scarcity_proxy,
     }
 
 
@@ -463,6 +536,10 @@ def _run_greedy_schedule(
     mode="priority",
     max_ready_eval=None,
     max_runtime_seconds=None,
+    decision_callback: Optional[Callable[[Dict], None]] = None,
+    candidate_policy=None,
+    ml_top_k=None,
+    ml_fallback_expand=True,
 ):
     start_perf = datetime.now().timestamp()
     unscheduled = [op for op in schedule.operations.values()]
@@ -504,15 +581,97 @@ def _run_greedy_schedule(
 
         best = None
         selected = None
-        for op in ready:
-            candidate = _score_ready_candidate(
-                schedule, op, start_date, end_date, descendant_counts, mode
+        candidate_rows = []
+        max_descendants = max(descendant_counts.values()) if descendant_counts else 1
+
+        ready_for_feasibility = ready
+        topk_applied = False
+        fallback_used = False
+
+        if (
+            candidate_policy is not None
+            and ml_top_k is not None
+            and int(ml_top_k) > 0
+            and len(ready) > int(ml_top_k)
+        ):
+            planning_horizon_hours = max(
+                (end_date.timestamp() - start_date.timestamp()) / 3600.0,
+                0.0,
             )
-            if candidate is None:
-                continue
-            if best is None or candidate["score"] > best["score"]:
-                best = candidate
-                selected = op
+            ranked_ready = []
+            for op in ready:
+                payload = _build_policy_prefilter_payload(
+                    op,
+                    planning_horizon_hours=planning_horizon_hours,
+                    descendant_counts=descendant_counts,
+                    max_descendants=max_descendants,
+                )
+                policy_prefilter_score = float(candidate_policy.score_candidate(payload))
+                ranked_ready.append((op, policy_prefilter_score))
+
+            ranked_ready.sort(
+                key=lambda row: (
+                    -row[1],
+                    row[0].metadata.get("priority_rank", 10**9),
+                    row[0].duration,
+                    row[0].operation_id,
+                )
+            )
+            ready_for_feasibility = [op for op, _ in ranked_ready[: int(ml_top_k)]]
+            topk_applied = True
+
+        def _evaluate_ops(ops):
+            nonlocal best, selected
+            for op in ops:
+                candidate = _score_ready_candidate(
+                    schedule, op, start_date, end_date, descendant_counts, mode
+                )
+                if candidate is None:
+                    continue
+                payload = _build_decision_candidate_payload(
+                    op, candidate, end_date, descendant_counts, max_descendants
+                )
+                candidate_rows.append((op, candidate, payload))
+                if best is None or candidate["score"] > best["score"]:
+                    best = candidate
+                    selected = op
+
+        _evaluate_ops(ready_for_feasibility)
+        if selected is None and topk_applied and ml_fallback_expand:
+            shortlisted_ids = {op.operation_id for op in ready_for_feasibility}
+            remaining = [op for op in ready if op.operation_id not in shortlisted_ids]
+            if remaining:
+                _evaluate_ops(remaining)
+                fallback_used = True
+
+        selection_mode = "heuristic"
+        if candidate_policy is not None and candidate_rows:
+            selected_row = None
+            selected_policy_score = None
+            for row in candidate_rows:
+                _op, _candidate, payload = row
+                policy_score = float(candidate_policy.score_candidate(payload))
+                payload["policy_score"] = policy_score
+                if selected_row is None or policy_score > selected_policy_score:
+                    selected_row = row
+                    selected_policy_score = policy_score
+            selected, best, _selected_payload = selected_row
+            if topk_applied:
+                selection_mode = "ml_policy_topk_fallback" if fallback_used else "ml_policy_topk"
+            else:
+                selection_mode = "ml_policy"
+
+        if decision_callback is not None and candidate_rows:
+            decision_callback(
+                {
+                    "scheduler_mode": mode,
+                    "selection_mode": selection_mode,
+                    "selected_operation_id": selected.operation_id if selected is not None else None,
+                    "candidates": [
+                        payload for _, _, payload in candidate_rows
+                    ],
+                }
+            )
 
         if selected is None:
             break
@@ -529,6 +688,19 @@ def _run_greedy_schedule(
         unscheduled_tests.append(op)
         unscheduled.remove(op)
     return unscheduled_tests
+
+
+def _load_candidate_policy_from_env():
+    use_ml = os.getenv("SCHED_USE_ML_POLICY", "").strip().lower() in {"1", "true", "yes"}
+    if not use_ml:
+        return None
+
+    model_path = os.getenv("SCHED_ML_MODEL_PATH", "artifacts/policy/linear_policy.json")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"SCHED_USE_ML_POLICY is enabled but model was not found at: {model_path}"
+        )
+    return LinearCandidatePolicy.load(model_path)
 
 
 def _run_repair_pass(
@@ -669,6 +841,17 @@ def _run_repair_pass(
 
 def main():
     schedule, tests, sites, vehicles, start_date, end_date = build_vehicle_testing_problem()
+    candidate_policy = _load_candidate_policy_from_env()
+    ml_top_k_raw = os.getenv("SCHED_ML_TOP_K", "").strip()
+    ml_top_k = int(ml_top_k_raw) if ml_top_k_raw else None
+    if ml_top_k is not None and ml_top_k <= 0:
+        ml_top_k = None
+    ml_fallback_expand = os.getenv("SCHED_ML_FALLBACK_EXPAND", "1").strip().lower() not in {"0", "false", "no"}
+    if candidate_policy is not None:
+        print("ML policy mode enabled via environment variables.")
+        if ml_top_k is not None:
+            fallback_label = "enabled" if ml_fallback_expand else "disabled"
+            print(f"ML top-K gating enabled (K={ml_top_k}, fallback_expand={fallback_label}).")
 
     ranking_strategies = {
         "naive": lambda ops: (compute_priority_ranks_naive(ops) or {}),
@@ -751,6 +934,9 @@ def main():
                     mode="priority",
                     max_ready_eval=PERFORMANCE_CONFIG["max_ready_eval"],
                     max_runtime_seconds=PERFORMANCE_CONFIG["max_greedy_runtime_seconds"],
+                    candidate_policy=candidate_policy,
+                    ml_top_k=ml_top_k,
+                    ml_fallback_expand=ml_fallback_expand,
                 )
             elif scheduler_cfg["base_mode"] == "enhanced_dispatch":
                 unscheduled_tests = _run_greedy_schedule(
@@ -761,6 +947,9 @@ def main():
                     mode="enhanced_dispatch",
                     max_ready_eval=PERFORMANCE_CONFIG["max_ready_eval"],
                     max_runtime_seconds=PERFORMANCE_CONFIG["max_greedy_runtime_seconds"],
+                    candidate_policy=candidate_policy,
+                    ml_top_k=ml_top_k,
+                    ml_fallback_expand=ml_fallback_expand,
                 )
             else:
                 raise ValueError(f"Unknown scheduler mode: {scheduler_cfg['base_mode']}")
@@ -875,9 +1064,13 @@ def main():
                 f"(rank {op.metadata.get('priority_rank')}, priority {op.metadata.get('priority', 5)})"
             )
 
-    schedule.create_gantt_chart()
-    schedule.show_visual_gantt_chart(resource_type_filter=["site"], title_suffix="Sites", block=False)
-    schedule.show_visual_gantt_chart(resource_type_filter=["vehicle"], title_suffix="Vehicles", block=True)
+    show_charts = os.getenv("SCHED_SHOW_CHARTS", "1").strip().lower() not in {"0", "false", "no"}
+    if show_charts:
+        schedule.create_gantt_chart()
+        schedule.show_visual_gantt_chart(resource_type_filter=["site"], title_suffix="Sites", block=False)
+        schedule.show_visual_gantt_chart(resource_type_filter=["vehicle"], title_suffix="Vehicles", block=True)
+    else:
+        print("Chart rendering skipped (SCHED_SHOW_CHARTS disabled).")
 
     print("Vehicle testing scenario constructed.")
 

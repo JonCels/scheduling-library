@@ -215,6 +215,80 @@ Displays an interactive matplotlib window with:
 - Time on the x-axis
 - Legend with job details
 
+## ML Workflow (Vehicle Testing Example)
+
+The repository includes a simple imitation-learning baseline for the vehicle testing scenario in `examples/`.
+
+### 1) Collect trajectory data
+
+```bash
+python examples/collect_imitation_data.py --episodes 5 --seed-base 1000
+```
+
+Useful options:
+- `--output-dir data/imitation/episodes`
+- `--scheduler-mode enhanced_dispatch` (or `priority`)
+- `--skip-repair` (faster collection)
+
+### 2) Train a policy model
+
+```bash
+python examples/train_imitation_policy.py
+```
+
+This writes a linear candidate-ranking model to `artifacts/policy/linear_policy.json`.
+
+### 3) Evaluate baseline vs ML policy
+
+```bash
+python imitation_learning/evaluate_model.py --model-path artifacts/policy/linear_policy.json --episodes 5 --seed-base 1000
+```
+
+For faster smoke tests, use reduced-size settings and bounded runtime:
+
+```bash
+python imitation_learning/evaluate_model.py --model-path artifacts/policy/linear_policy.json --episodes 1 --seed-base 500 --skip-repair --selected-test-count 30 --random-test-pool-size 120 --max-greedy-runtime-seconds 5
+```
+
+### 4) Run the scheduling example with ML policy enabled
+
+```bash
+SCHED_USE_ML_POLICY=1 SCHED_ML_MODEL_PATH=artifacts/policy/linear_policy.json python examples/example_vehicle_testing.py
+```
+
+Optional:
+- `SCHED_SHOW_CHARTS=0` to skip chart rendering in non-interactive runs.
+- `SCHED_ML_TOP_K=<int>` to evaluate only top-K ML-ranked ready ops with full feasibility checks (speedup lever).
+- `SCHED_ML_FALLBACK_EXPAND=0` to disable widening beyond top-K when none are feasible (faster, but can reduce quality).
+
+### 5) Improve beyond imitation (reward tuning)
+
+You can optimize the policy directly for schedule quality (`strategy_score`) using CEM:
+
+Warm-start from your imitation model:
+
+```bash
+python imitation_learning/train_by_reward.py --init-model-path artifacts/policy/linear_policy.json --output-model-path artifacts/policy/linear_policy_reward_tuned.json --generations 10 --population-size 16 --episodes-per-candidate 3 --seed-base 20000
+```
+
+Train from scratch:
+
+```bash
+python imitation_learning/train_by_reward.py --from-scratch --output-model-path artifacts/policy/linear_policy_reward_tuned_from_scratch.json --generations 10 --population-size 16 --episodes-per-candidate 3 --seed-base 20000
+```
+
+Then evaluate the tuned model:
+
+```bash
+python imitation_learning/evaluate_model.py --model-path artifacts/policy/linear_policy_reward_tuned.json --episodes 10 --seed-base 5000
+```
+
+To benchmark ML speedup settings during evaluation:
+
+```bash
+python imitation_learning/evaluate_model.py --model-path artifacts/policy/linear_policy_reward_tuned.json --episodes 10 --seed-base 5000 --ml-top-k 8
+```
+
 ## Example: Manufacturing Schedule
 
 See `example_usage.py` for a complete working example that demonstrates:

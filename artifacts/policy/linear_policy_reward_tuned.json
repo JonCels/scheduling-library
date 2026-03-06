@@ -1,0 +1,134 @@
+{
+  "model_type": "linear_cem_reward_optimization",
+  "feature_names": [
+    "priority_rank_inv",
+    "priority_bucket_inv",
+    "duration_hours_inv",
+    "effective_duration_hours_inv",
+    "slack_hours_inv",
+    "site_options_inv",
+    "avg_site_importance",
+    "descendant_ratio",
+    "heuristic_score"
+  ],
+  "weights": [
+    0.46849800946304543,
+    0.37239796944443126,
+    0.06167519481384491,
+    -0.18629221058753279,
+    0.11708059604581786,
+    0.16166461567149298,
+    -0.08517949276603218,
+    0.44754776054761064,
+    -0.17618014414049105
+  ],
+  "bias": 0.14391696011519442,
+  "feature_mean": [
+    0.02000517046974792,
+    0.2885534450268332,
+    0.6083997417576282,
+    0.4758028805300278,
+    0.06726867813883634,
+    0.47765453375739175,
+    0.0,
+    0.03709222386311439,
+    -0.822510284293634
+  ],
+  "feature_std": [
+    0.019309691096470176,
+    0.09479253481468111,
+    0.18775781733583832,
+    0.11507146660484961,
+    0.042410481347725605,
+    0.29511661451226145,
+    1.0,
+    0.1467569464074118,
+    9.042136742973955
+  ],
+  "training_summary": {
+    "from_scratch": false,
+    "init_model_path": "artifacts/policy/linear_policy.json",
+    "generations": 10,
+    "population_size": 16,
+    "elite_fraction": 0.25,
+    "episodes_per_candidate": 3,
+    "best_train_score": 1.0291216021805913,
+    "baseline_eval_score": 0.942063075194218,
+    "tuned_eval_score": 1.007742058130463,
+    "eval_score_delta": 0.06567898293624508,
+    "history": [
+      {
+        "generation": 0,
+        "best_avg_strategy_score": 0.9986956248569859,
+        "mean_avg_strategy_score": 0.9303718330330643,
+        "best_avg_priority_coverage_percent": 105.77445310712322
+      },
+      {
+        "generation": 1,
+        "best_avg_strategy_score": 1.0131313192758573,
+        "mean_avg_strategy_score": 0.9674418673425346,
+        "best_avg_priority_coverage_percent": 107.78146120577844
+      },
+      {
+        "generation": 2,
+        "best_avg_strategy_score": 1.013735202696981,
+        "mean_avg_strategy_score": 0.9891299218047472,
+        "best_avg_priority_coverage_percent": 108.22731700378928
+      },
+      {
+        "generation": 3,
+        "best_avg_strategy_score": 1.026673652941861,
+        "mean_avg_strategy_score": 1.0001247295309954,
+        "best_avg_priority_coverage_percent": 109.56105846958447
+      },
+      {
+        "generation": 4,
+        "best_avg_strategy_score": 1.0150434266252588,
+        "mean_avg_strategy_score": 0.9990353297430732,
+        "best_avg_priority_coverage_percent": 108.12753480963882
+      },
+      {
+        "generation": 5,
+        "best_avg_strategy_score": 1.0124174734393792,
+        "mean_avg_strategy_score": 0.9965727829182623,
+        "best_avg_priority_coverage_percent": 107.85137399473719
+      },
+      {
+        "generation": 6,
+        "best_avg_strategy_score": 1.0266855157279349,
+        "mean_avg_strategy_score": 1.0015622721760435,
+        "best_avg_priority_coverage_percent": 109.70721724376963
+      },
+      {
+        "generation": 7,
+        "best_avg_strategy_score": 1.0289332358021452,
+        "mean_avg_strategy_score": 1.0028676448969815,
+        "best_avg_priority_coverage_percent": 109.59177021600888
+      },
+      {
+        "generation": 8,
+        "best_avg_strategy_score": 1.0291216021805913,
+        "mean_avg_strategy_score": 1.0040113546698517,
+        "best_avg_priority_coverage_percent": 109.84679749479614
+      },
+      {
+        "generation": 9,
+        "best_avg_strategy_score": 1.0254882670494898,
+        "mean_avg_strategy_score": 1.0079686651641442,
+        "best_avg_priority_coverage_percent": 109.70802412192697
+      }
+    ],
+    "baseline_eval_details": {
+      "avg_strategy_score": 0.942063075194218,
+      "avg_priority_coverage_percent": 99.75730569557354,
+      "avg_site_capacity_used_percent": 72.00231481481481,
+      "avg_scheduled_operations": 90.33333333333333
+    },
+    "tuned_eval_details": {
+      "avg_strategy_score": 1.007742058130463,
+      "avg_priority_coverage_percent": 107.57944708112268,
+      "avg_site_capacity_used_percent": 73.55324074074073,
+      "avg_scheduled_operations": 90.0
+    }
+  }
+}
